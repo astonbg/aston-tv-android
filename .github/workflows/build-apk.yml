@@ -1,13 +1,15 @@
-name: Build Android APK
+name: Build and publish Aston TV Android APK
 on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - 'releases/**'
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -15,15 +17,30 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - name: Install SDK
+      - name: Install Android SDK
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Build Android installable APK
-        run: gradle :app:assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+      - name: Build and verify installable APK
+        run: |
+          gradle :app:assembleDebug --no-daemon
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
           name: AstonTV-Android-4.0.2-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Publish direct-download APK
+        run: |
+          mkdir -p releases
+          cp app/build/outputs/apk/debug/app-debug.apk releases/AstonTV-Premium-Android-4.0.2.apk
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add releases/AstonTV-Premium-Android-4.0.2.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish verified Aston TV Android debug APK [skip ci]"
+            git push origin HEAD:main
+          fi
