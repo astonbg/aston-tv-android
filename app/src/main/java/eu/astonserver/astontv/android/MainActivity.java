@@ -220,7 +220,7 @@ public final class MainActivity extends Activity {
     }
     private void back(){
         if(custom!=null){hideFullscreen();return;}
-        web.evaluateJavascript("(function(){try{if(typeof pairingVisible==='function'&&pairingVisible()){if(typeof pairUpdate==='function')pairUpdate('back');return 'ok';}if(typeof remoteBack==='function'){remoteBack();return 'ok';}}catch(e){}return 'none';})()",r->{
+        web.evaluateJavascript("(function(){try{var modal=document.getElementById('settingsModal');if(modal&&!modal.classList.contains('hidden')){var close=document.getElementById('closeSettings');if(close)close.click();return 'ok';}var watch=document.getElementById('watchSection');if(watch&&watch.classList.contains('theater')){var expand=document.getElementById('playerExpand');if(expand)expand.click();return 'ok';}var current=document.querySelector('[data-view].active');if(current&&current.getAttribute('data-view')!=='home'){var home=document.querySelector('[data-view=home]');if(home)home.click();return 'ok';}if(typeof remoteBack==='function'){remoteBack();return 'ok';}}catch(e){}return 'none';})()",r->{
             if("\"none\"".equals(r)){
                 if(web.canGoBack())web.goBack();
                 else{
