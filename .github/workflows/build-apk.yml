@@ -28,19 +28,20 @@ jobs:
           gradle :app:assembleDebug --no-daemon
           test -s app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep "package: name=\x27eu.astonserver.astontv.android.premium411\x27"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AstonTV-Android-4.1.0-APK
+          name: AstonTV-Android-4.1.1-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Publish direct-download APK
         run: |
           mkdir -p releases
-          cp app/build/outputs/apk/debug/app-debug.apk releases/AstonTV-Premium-Android-4.1.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk releases/AstonTV-Premium-Android-4.1.1.apk
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add releases/AstonTV-Premium-Android-4.1.0.apk
+          git add releases/AstonTV-Premium-Android-4.1.1.apk
           if ! git diff --cached --quiet; then
             git commit -m "Publish verified Aston TV Android debug APK [skip ci]"
             git push origin HEAD:main
