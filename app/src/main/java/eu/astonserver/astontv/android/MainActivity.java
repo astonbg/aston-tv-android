@@ -116,7 +116,7 @@ public final class MainActivity extends Activity {
         addControl(controls,"−10 сек",()->seek(-10));
         addControl(controls,"+10 сек",()->seek(10));
         addControl(controls,"▶ / ❚❚",this::togglePlayback);
-        addControl(controls,"EPG",()->navigate("guide"));
+        addControl(controls,"EPG",()->js("(function(){var p=document.getElementById('programPanel');if(p){p.scrollIntoView({block:'center',behavior:'smooth'});}})()"));
         addControl(controls,"Камери",()->navigate("cameras"));
         addControl(controls,"⛶",this::fullScreen);
 
@@ -155,7 +155,8 @@ public final class MainActivity extends Activity {
     }
     private void home(){navigate("home");}
     private void changeChannel(int step){
-        js("(function(){if(typeof changeChannel==='function' && typeof s!=='undefined' && s.playingChannel){changeChannel("+step+");return;}if(typeof s!=='undefined'&&s.channels&&s.channels.length&&typeof startChannel==='function'){startChannel(s.channels[0].id,'auto');return;}alert('Няма избран или зареден канал');})()");
+        String button=step<0?"previousChannel":"nextChannel";
+        js("(function(){var b=document.getElementById('"+button+"');if(b){b.click();return;}var first=document.querySelector('#channelRail [data-id]');if(first)first.click();})()");
     }
     private void seek(int seconds){
         web.evaluateJavascript("(function(){var v=document.querySelector('video');if(!v||!v.seekable||!v.seekable.length)return 'no';try{var a=v.seekable.start(0),b=v.seekable.end(v.seekable.length-1);if(!isFinite(a)||!isFinite(b)||b-a<2)return 'no';var t=Math.min(b,Math.max(a,v.currentTime+("+seconds+")));v.currentTime=t;return 'ok';}catch(e){return 'no';}})()",r->{
@@ -171,7 +172,7 @@ public final class MainActivity extends Activity {
         js("(function(){var v=document.querySelector('video');if(v&&v.requestFullscreen){v.requestFullscreen().catch(function(){});return;}var b=document.querySelector('#fullscreen');if(b)b.click();})()");
     }
     private void pickChannel(){
-        web.evaluateJavascript("(function(){if(typeof s==='undefined'||!s.channels)return '[]';return JSON.stringify(s.channels.map(function(c){return {id:String(c.id),name:String(c.name||c.id),number:String(c.number||'')}}));})()",raw->{
+        web.evaluateJavascript("(function(){var els=document.querySelectorAll('#channelRail [data-id]');return JSON.stringify(Array.prototype.map.call(els,function(el){return {id:el.getAttribute('data-id'),name:el.getAttribute('title')||el.textContent.trim(),number:''}}));})()",raw->{
             try{
                 Object decoded=new JSONTokener(raw).nextValue();
                 JSONArray channels=new JSONArray(String.valueOf(decoded));
@@ -185,7 +186,8 @@ public final class MainActivity extends Activity {
                     .setItems(labels,(d,which)->{
                         String id=channels.optJSONObject(which).optString("id","");
                         String safe=JSONObject.quote(id);
-                        js("(function(){if(typeof startChannel==='function')startChannel("+safe+",'auto');})()");
+                        js("(function(){var id="+safe+";var es=document.querySelectorAll('[data-id]');for(var i=0;i<es.length;i++){if(es[i].getAttribute('data-id')===id){es[i].click();break;}}})()");
+
                     }).setNegativeButton("Отказ",null).show();
             }catch(Exception e){toast("Зареди Premium Gateway 4.0 и опитай пак");}
         });
