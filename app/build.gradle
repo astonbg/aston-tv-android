@@ -3,11 +3,11 @@ android {
     namespace 'eu.astonserver.astontv.android'
     compileSdk 35
     defaultConfig {
-        applicationId 'eu.astonserver.astontv.android'
+        applicationId 'eu.astonserver.astontv.android.premium411'
         minSdk 24
         targetSdk 35
-        versionCode 40100
-        versionName '4.1.0'
+        versionCode 40101
+        versionName '4.1.1'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
