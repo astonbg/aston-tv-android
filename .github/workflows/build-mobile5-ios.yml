@@ -15,6 +15,37 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Generate branded Aston TV app icon
+        run: |
+          mkdir -p ios-mobile5/AstonMobile5/Assets.xcassets/AppIcon.appiconset
+          cat > ios-mobile5/icon.swift <<'SWIFT'
+          import AppKit
+          let image=NSImage(size:NSSize(width:1024,height:1024))
+          image.lockFocus()
+          NSColor(calibratedRed:0.035,green:0.06,blue:0.11,alpha:1).setFill()
+          NSRect(x:0,y:0,width:1024,height:1024).fill()
+          let plate=NSBezierPath(roundedRect:NSRect(x:178,y:178,width:668,height:668),xRadius:175,yRadius:175)
+          NSColor(calibratedRed:0.08,green:0.17,blue:0.25,alpha:1).setFill()
+          plate.fill()
+          NSColor(calibratedRed:0.17,green:0.82,blue:0.92,alpha:1).setStroke()
+          plate.lineWidth=18
+          plate.stroke()
+          let play=NSBezierPath()
+          play.move(to:NSPoint(x:404,y:320))
+          play.line(to:NSPoint(x:404,y:704))
+          play.line(to:NSPoint(x:718,y:512))
+          play.close()
+          NSColor(calibratedRed:0.48,green:0.95,blue:0.96,alpha:1).setFill()
+          play.fill()
+          image.unlockFocus()
+          guard let tiff=image.tiffRepresentation, let bitmap=NSBitmapImageRep(data:tiff),
+                let png=bitmap.representation(using:.png,properties:[:]) else {fatalError("Could not render Aston icon")}
+          try png.write(to:URL(fileURLWithPath:"ios-mobile5/AstonMobile5/Assets.xcassets/AppIcon.appiconset/AppIcon.png"))
+          SWIFT
+          swift ios-mobile5/icon.swift
+          cat > ios-mobile5/AstonMobile5/Assets.xcassets/AppIcon.appiconset/Contents.json <<'JSON'
+          {"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}
+          JSON
       - name: Generate native Xcode project
         run: cd ios-mobile5 && xcodegen generate
       - name: Build iPhone arm64 app without signing
