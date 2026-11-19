@@ -1,0 +1,20 @@
+name: Check Aston TV public Gateway
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/check-public-gateway.yml'
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Gateway without credentials
+        shell: bash
+        run: |
+          set +e
+          echo "PUBLIC GATEWAY HEALTH:"
+          curl -L --connect-timeout 5 --max-time 12 --silent --show-error --write-out '\nHTTP_STATUS=%{http_code} DNS=%{remote_ip} DURATION=%{time_total}s\n' 'https://tv.astonserver.eu/healthz'
+          echo "PUBLIC PAIRING API (expected 401 unless authenticated):"
+          curl -L --connect-timeout 5 --max-time 12 --silent --show-error --write-out '\nHTTP_STATUS=%{http_code} DURATION=%{time_total}s\n' 'https://tv.astonserver.eu/api/public/me'
+          exit 0
