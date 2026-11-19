@@ -13,7 +13,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: eu.astonserver.astontv.ios
         PRODUCT_NAME: AstonTV
         SWIFT_VERSION: "5.0"
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: AstonTV/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Aston TV Premium
         INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
         TARGETED_DEVICE_FAMILY: "1,2"
