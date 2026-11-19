@@ -1,0 +1,39 @@
+name: Build Aston TV iPhone IPA (unsigned)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: cd ios && xcodegen generate
+      - name: Build for physical iPhone (unsigned)
+        run: |
+          xcodebuild -project ios/AstonTV.xcodeproj -scheme AstonTV -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/aston-build" CODE_SIGNING_ALLOWED=NO build
+      - name: Validate app bundle
+        run: |
+          APP="$RUNNER_TEMP/aston-build/Build/Products/Release-iphoneos/AstonTV.app"
+          test -d "$APP"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist"
+          test -s "$APP/AstonTV"
+      - name: Package unsigned IPA for Apple ID sideload signing
+        run: |
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/aston-build/Build/Products/Release-iphoneos/AstonTV.app" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qry "$GITHUB_WORKSPACE/AstonTV-Premium-iPhone-4.1.1-UNSIGNED.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AstonTV-iPhone-4.1.1-Unsigned-IPA
+          path: AstonTV-Premium-iPhone-4.1.1-UNSIGNED.ipa
+          if-no-files-found: error
