@@ -27,8 +27,10 @@ struct GatewayVideoView: UIViewRepresentable {
         web.navigationDelegate=context.coordinator
         engine.webView=web
         let cookies=HTTPCookieStorage.shared.cookies(for:playback.server) ?? []
+        let coordinator=context.coordinator
         Task { @MainActor in
             for cookie in cookies { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
+            guard coordinator.active else { return }
             web.load(URLRequest(url:playback.server))
         }
         return web
@@ -40,6 +42,7 @@ struct GatewayVideoView: UIViewRepresentable {
         }
     }
     static func dismantleUIView(_ web:WKWebView,coordinator:Coordinator) {
+        coordinator.active=false
         web.evaluateJavaScript("stop()",completionHandler:nil)
         web.configuration.userContentController.removeScriptMessageHandler(forName:"videoState")
         web.stopLoading()
@@ -48,6 +51,7 @@ struct GatewayVideoView: UIViewRepresentable {
         weak var engine:TVEngine?
         var playback:GatewayPlayback
         var ready=false
+        var active=true
         init(_ engine:TVEngine,_ playback:GatewayPlayback) {self.engine=engine;self.playback=playback}
         func webView(_ web:WKWebView,decidePolicyFor action:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
             guard let url=action.request.url else {decisionHandler(.cancel);return}
@@ -68,7 +72,8 @@ struct GatewayVideoView: UIViewRepresentable {
                 style.textContent='body{margin:0!important;background:#000!important;overflow:hidden!important}body>*{visibility:hidden!important}body>video{visibility:visible!important;position:fixed!important;inset:0!important;width:100%!important;height:100%!important;object-fit:contain!important;background:#000!important}';document.head.appendChild(style);}
               document.body.appendChild(v);v.setAttribute('playsinline','');
               if(!v.dataset.astonEvents){v.dataset.astonEvents='1';
-                ['playing','pause','waiting','error'].forEach(function(event){v.addEventListener(event,function(){window.webkit.messageHandlers.videoState.postMessage({state:event});});});}
+                ['playing','pause','waiting','error'].forEach(function(event){v.addEventListener(event,function(){window.webkit.messageHandlers.videoState.postMessage({state:event});});});
+                v.addEventListener('timeupdate',function(){var r=v.seekable;window.webkit.messageHandlers.videoState.postMessage({seekable:!!(r.length&&r.end(r.length-1)-r.start(0)>2)});});}
               playback(a[0],a[1],null,'mpegts',a[2]);
             })();
             """
@@ -77,8 +82,10 @@ struct GatewayVideoView: UIViewRepresentable {
             }
         }
         func userContentController(_ controller:WKUserContentController,didReceive message:WKScriptMessage) {
-            guard let engine,engine.webPlayback==playback,
-                  let data=message.body as? [String:String],let state=data["state"] else{return}
+            guard active,let engine,engine.webPlayback==playback,
+                  let data=message.body as? [String:Any] else{return}
+            if let seekable=data["seekable"] as? Bool,seekable != engine.hasSeek {engine.hasSeek=seekable}
+            guard let state=data["state"] as? String else{return}
             engine.isPlaying=state=="playing"
             switch state {
             case "playing":engine.status="НА ЖИВО"

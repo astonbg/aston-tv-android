@@ -110,6 +110,7 @@ final class TVEngine: ObservableObject {
         progressObserver = player.addPeriodicTimeObserver(forInterval:CMTime(seconds:1,preferredTimescale:600),queue:.main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard self.webPlayback == nil else { return }
                 if let range = self.player.currentItem?.seekableTimeRanges.last?.timeRangeValue {
                     self.hasSeek = CMTimeGetSeconds(range.duration) > 2
                 } else { self.hasSeek = false }
@@ -305,6 +306,11 @@ final class TVEngine: ObservableObject {
         if isPlaying {player.pause()}else{player.play()}
     }
     func seek(_ secs:Double) {
+        if webPlayback != nil {
+            guard hasSeek,secs.isFinite else { return }
+            webView?.evaluateJavaScript("(function(){var v=document.getElementById('video');if(v.seekable.length){var a=v.seekable.start(0),b=v.seekable.end(v.seekable.length-1);v.currentTime=Math.min(b,Math.max(a,v.currentTime+\(secs)));}})()",completionHandler:nil)
+            return
+        }
         guard hasSeek,let r=player.currentItem?.seekableTimeRanges.last?.timeRangeValue else{return}
         let a=CMTimeGetSeconds(r.start), b=CMTimeGetSeconds(CMTimeRangeGetEnd(r))
         let cur=CMTimeGetSeconds(player.currentTime())
