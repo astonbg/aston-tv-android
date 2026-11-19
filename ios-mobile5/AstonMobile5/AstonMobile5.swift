@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import Combine
+import WebKit
 
 private enum TVStyle {
     static let bg = Color(red: 0.04, green: 0.055, blue: 0.085)
@@ -31,7 +32,7 @@ struct TVCamera: Identifiable {
     init(_ obj: [String:Any]) {
         id = obj["id"] as? String ?? ""
         name = obj["name"] as? String ?? "Камера"
-        enabled = obj["enabled"] as? Bool ?? false
+        enabled = GatewayContract.isEnabled(obj["enabled"])
     }
 }
 enum TVSection: Int, CaseIterable {
@@ -76,21 +77,36 @@ final class TVEngine: ObservableObject {
     @Published var showList = false
     @Published var showEPG = false
     @Published var showFullscreen = false
+    @Published var cameraFormat = "hls"
+    @Published var webPlayback: GatewayPlayback?
+    weak var webView: WKWebView?
     @Published var hasSeek = false
     @Published var favorites = Set(UserDefaults.standard.stringArray(forKey:"aston.mobile5.favs") ?? [])
     let player = AVPlayer()
     private var refresh: Task<Void,Never>?
     private var sequence = 0
     private var progressObserver: Any?
+    private var itemObservation: NSKeyValueObservation?
+    private var playbackObservation: NSKeyValueObservation?
     private let session: URLSession
     var server: URL {
-        UserDefaults.standard.string(forKey:"aston.mobile5.server") == Self.local.absoluteString ? Self.local : Self.remote
+        UserDefaults.standard.string(forKey:"aston.mobile5.server") == Self.remote.absoluteString ? Self.remote : Self.local
     }
     init() {
         let c = URLSessionConfiguration.default
         c.httpCookieStorage = HTTPCookieStorage.shared
         c.httpShouldSetCookies = true
         session = URLSession(configuration:c)
+        playbackObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            let state = player.timeControlStatus
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.webPlayback == nil else { return }
+                self.isPlaying = state == .playing
+                if state == .playing { self.status = "НА ЖИВО" }
+                else if state == .waitingToPlayAtSpecifiedRate { self.status = "Буфериране…" }
+            }
+        }
         progressObserver = player.addPeriodicTimeObserver(forInterval:CMTime(seconds:1,preferredTimescale:600),queue:.main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -104,7 +120,7 @@ final class TVEngine: ObservableObject {
         if let obs=progressObserver {player.removeTimeObserver(obs)}
     }
     private func query(_ path: String, post: [String:Any]? = nil) async throws -> [String:Any] {
-        var req = URLRequest(url:server.appendingPathComponent(path),timeoutInterval:9)
+        var req = URLRequest(url:server.appendingPathComponent(path),timeoutInterval:30)
         req.cachePolicy = .reloadIgnoringLocalCacheData
         if let post {
             req.httpMethod = "POST"
@@ -118,7 +134,10 @@ final class TVEngine: ObservableObject {
             let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
             throw NSError(domain:"Aston TV",code:status,userInfo:[NSLocalizedDescriptionKey:(body?["error"] as? String) ?? "Грешка от сървъра: \(status)"])
         }
-        return (try JSONSerialization.jsonObject(with:data)) as? [String:Any] ?? [:]
+        guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any] else {
+            throw NSError(domain:"Aston TV",code:2,userInfo:[NSLocalizedDescriptionKey:"Gateway върна неочакван отговор"])
+        }
+        return object
     }
     func connect() async {
         loading=true
@@ -130,19 +149,12 @@ final class TVEngine: ObservableObject {
             if selected == nil, let last=UserDefaults.standard.string(forKey:"aston.mobile5.last") {
                 selected=channels.first{$0.id==last}
             }
-            status="Готово · \(channels.count) канала"
             networkHint=""
         } catch let e as NSError where e.code == 401 {
             paired=false;showPair=true;status="Въведи 8-цифрен код"
         } catch {
             paired=false
             let offline = (error as NSError).domain == NSURLErrorDomain
-            if offline && server.host == Self.local.host {
-                UserDefaults.standard.set(Self.remote.absoluteString,forKey:"aston.mobile5.server")
-                networkHint="Домашният Gateway е недостъпен. Преминах към публичния адрес."
-                await connect()
-                return
-            }
             status="Сървърът не отговаря"
             networkHint = offline
                 ? "Няма достъп до \(server.host ?? "") — провери Wi-Fi/VPN или избери външния адрес."
@@ -165,11 +177,16 @@ final class TVEngine: ObservableObject {
         } catch {errorText=error.localizedDescription}
     }
     func reload() async {
+        errorText = nil
         do {
             let r = try await query("api/public/channels")
-            channels=((r["channels"] as? [[String:Any]]) ?? []).map(TVChannel.init)
+            guard let rows = r["channels"] as? [[String:Any]] else {
+                throw NSError(domain:"Aston TV",code:2,userInfo:[NSLocalizedDescriptionKey:"Липсва списъкът с канали в отговора"])
+            }
+            channels=rows.map(TVChannel.init)
             if let old=selected { selected=channels.first{$0.id==old.id} }
-        } catch {errorText=error.localizedDescription}
+            if selected == nil && selectedCamera == nil { status="Заредени: \(channels.count) канала" }
+        } catch { status="Каналите не са заредени"; errorText=error.localizedDescription }
         do {
             let r=try await query("api/public/cameras")
             cameras=((r["cameras"] as? [[String:Any]]) ?? []).map(TVCamera.init)
@@ -204,14 +221,29 @@ final class TVEngine: ObservableObject {
               (u.scheme == "https" || (u.scheme == "http" && u.host == "10.10.10.179")) else {
             throw NSError(domain:"Aston TV",code:1,userInfo:[NSLocalizedDescriptionKey:"Невалиден видео адрес"])
         }
-        player.replaceCurrentItem(with:AVPlayerItem(url:u))
+        let cookies = HTTPCookieStorage.shared.cookies(for: u) ?? []
+        let asset = AVURLAsset(url:u, options:[AVURLAssetHTTPCookiesKey:cookies])
+        let item = AVPlayerItem(asset:asset)
+        itemObservation = item.observe(\.status, options:[.new]) { [weak self] observed, _ in
+            let failed = observed.status == .failed
+            Task { @MainActor [weak self] in
+                guard let self, self.player.currentItem === observed, failed else { return }
+                self.status="Видеото не може да се възпроизведе"
+                self.isPlaying=false
+                self.errorText="Потокът е отказан или форматът не се поддържа. Провери Gateway и избери друг формат за камерата."
+            }
+        }
+        player.replaceCurrentItem(with:item)
         player.play()
-        isPlaying=true
+        status="Зареждане на видео…"
     }
     func play(_ ch:TVChannel) async {
         sequence += 1
         let current=sequence
         refresh?.cancel()
+        webView?.evaluateJavaScript("stop()", completionHandler:nil)
+        webPlayback=nil
+        player.pause();player.replaceCurrentItem(with:nil)
         loading=true
         selected=ch;selectedCamera=nil;section = .channels
         status="Зареждане на \(ch.name)"
@@ -221,12 +253,13 @@ final class TVEngine: ObservableObject {
             let r=try await query("api/public/play",post:["channel_id":ch.id,"format":"auto"])
             guard current==sequence else{return}
             if (r["format"] as? String)=="mpegts" {
-                status="Този канал изисква HLS за iPhone"
-                player.replaceCurrentItem(with:nil);isPlaying=false
+                guard let link=r["url"] as? String else { throw URLError(.badServerResponse) }
+                webPlayback=GatewayPlayback(server:server,url:link,name:ch.name,channel:ch.id)
+                status="Зареждане на видео…";isPlaying=false
+                refreshLink(channel:ch.id,camera:nil)
                 return
             }
             try playURL(r)
-            status="НА ЖИВО"
             refreshLink(channel:ch.id,camera:nil)
         } catch {if current==sequence{status="Грешка";errorText=error.localizedDescription}}
     }
@@ -235,15 +268,17 @@ final class TVEngine: ObservableObject {
         sequence += 1
         let current=sequence
         refresh?.cancel()
+        webView?.evaluateJavaScript("stop()", completionHandler:nil)
+        webPlayback=nil
+        player.pause();player.replaceCurrentItem(with:nil)
         loading=true
         selectedCamera=cam;selected=nil;section = .cameras
         status="Свързване с \(cam.name)"
         defer {if current==sequence{loading=false}}
         do {
-            let r=try await query("api/public/camera-play",post:["camera":cam.id,"format":"mp4"])
+            let r=try await query("api/public/camera-play",post:["camera":cam.id,"format":cameraFormat])
             guard current==sequence else{return}
             try playURL(r)
-            status="КАМЕРА · LIVE"
             refreshLink(channel:nil,camera:cam.id)
         } catch {if current==sequence{status="Камерата не е достъпна";errorText=error.localizedDescription}}
     }
@@ -263,8 +298,11 @@ final class TVEngine: ObservableObject {
         Task {await play(channels[next])}
     }
     func pause() {
+        if webPlayback != nil {
+            webView?.evaluateJavaScript("(function(){var v=document.getElementById('video');if(v.paused)v.play().catch(function(){});else v.pause();})()",completionHandler:nil)
+            return
+        }
         if isPlaying {player.pause()}else{player.play()}
-        isPlaying.toggle()
     }
     func seek(_ secs:Double) {
         guard hasSeek,let r=player.currentItem?.seekableTimeRanges.last?.timeRangeValue else{return}
@@ -275,6 +313,9 @@ final class TVEngine: ObservableObject {
     }
     func stop() {
         sequence += 1;refresh?.cancel()
+        itemObservation=nil
+        webView?.evaluateJavaScript("stop()",completionHandler:nil)
+        webPlayback=nil
         player.pause();player.replaceCurrentItem(with:nil)
         isPlaying=false;hasSeek=false;selected=nil;selectedCamera=nil
         status="Избери канал"
@@ -291,6 +332,11 @@ final class TVEngine: ObservableObject {
         return URL(string:ch.logo,relativeTo:server)?.absoluteURL
     }
     func thumbURL(_ cam:TVCamera)->URL {server.appendingPathComponent("api/public/thumb/\(cam.id)")}
+    func fullScreen(_ native: () -> Void) {
+        if webPlayback != nil {
+            webView?.evaluateJavaScript("(function(){var v=document.getElementById('video');if(v.webkitEnterFullscreen)v.webkitEnterFullscreen();})()",completionHandler:nil)
+        } else { native() }
+    }
 }
 struct NativePlayerView:UIViewControllerRepresentable {
     let player:AVPlayer
@@ -383,7 +429,7 @@ struct MobilePlayerHome:View {
                 Text("TV MOBILE").font(.system(size:9,weight:.bold)).foregroundStyle(TVStyle.teal).tracking(2)
             }
             Spacer()
-            Text("● LIVE").font(.system(size:11,weight:.bold)).foregroundStyle(TVStyle.teal)
+            Text(tv.isPlaying ? "● LIVE" : "ASTON TV").font(.system(size:11,weight:.bold)).foregroundStyle(TVStyle.teal)
                 .padding(.horizontal,10).padding(.vertical,7).background(TVStyle.panel,in:Capsule())
             Button {Task{await tv.reload()}} label:{Image(systemName:"arrow.clockwise").frame(width:33,height:36)}
             Button {tv.showSettings=true} label:{Image(systemName:"gearshape.fill").frame(width:33,height:36)}
@@ -393,7 +439,11 @@ struct MobilePlayerHome:View {
         VStack(spacing:0) {
             ZStack {
                 Color.black
-                NativePlayerView(player:tv.player).opacity(tv.selected != nil || tv.selectedCamera != nil ? 1 : 0)
+                if let playback=tv.webPlayback {
+                    GatewayVideoView(engine:tv,playback:playback)
+                } else {
+                    NativePlayerView(player:tv.player).opacity(tv.selected != nil || tv.selectedCamera != nil ? 1 : 0)
+                }
                 if tv.selected == nil && tv.selectedCamera == nil {
                     VStack(spacing:12) {
                         Image(systemName:"tv.and.hifispeaker.fill").font(.system(size:41)).foregroundStyle(TVStyle.teal)
@@ -407,7 +457,7 @@ struct MobilePlayerHome:View {
                         Text(tv.status).font(.system(size:10,weight:.semibold)).lineLimit(1)
                             .padding(7).background(.black.opacity(0.7),in:Capsule())
                         Spacer()
-                        Button {showFull=true} label:{Image(systemName:"arrow.up.left.and.arrow.down.right").font(.system(size:16)).padding(8).background(.black.opacity(0.7),in:Circle())}
+                        Button {tv.fullScreen {showFull=true}} label:{Image(systemName:"arrow.up.left.and.arrow.down.right").font(.system(size:16)).padding(8).background(.black.opacity(0.7),in:Circle())}
                     }
                     Spacer()
                     HStack {
@@ -503,6 +553,11 @@ struct MobilePlayerHome:View {
             VStack(alignment:.leading,spacing:13) {
                 Text("Камери").font(.title2.bold())
                 Text("Dahua · докосни за видео на живо").font(.caption).foregroundStyle(TVStyle.muted)
+                Picker("Видео формат",selection:$tv.cameraFormat) {
+                    Text("HLS").tag("hls")
+                    Text("MP4").tag("mp4")
+                }.pickerStyle(.segmented)
+                Text("При смяна на формата отвори камерата отново.").font(.caption).foregroundStyle(TVStyle.muted)
                 LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:11) {
                     ForEach(tv.cameras){cam in
                         Button {Task{await tv.playCamera(cam)}} label:{
@@ -513,7 +568,7 @@ struct MobilePlayerHome:View {
                                     VStack{HStack{Spacer();Circle().fill(cam.enabled ? Color.green:Color.gray).frame(width:7,height:7).padding(8)};Spacer()}
                                 }.aspectRatio(16/9,contentMode:.fit)
                                 Text(cam.name).font(.system(size:13,weight:.semibold))
-                                Text(cam.enabled ? "НА ЛИНИЯ":"ИЗКЛЮЧЕНА").font(.system(size:10)).foregroundStyle(TVStyle.muted)
+                                Text(cam.enabled ? "АКТИВИРАНА":"ИЗКЛЮЧЕНА").font(.system(size:10)).foregroundStyle(TVStyle.muted)
                             }.padding(9).background(TVStyle.panel,in:RoundedRectangle(cornerRadius:12))
                         }.buttonStyle(.plain).disabled(!cam.enabled)
                     }

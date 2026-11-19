@@ -2,7 +2,7 @@ name: Build Aston TV Mobile 5 for iPhone
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'codex/iphone-recovery']
     paths:
       - 'ios-mobile5/**'
       - '.github/workflows/build-mobile5-ios.yml'
@@ -48,6 +48,10 @@ jobs:
           JSON
       - name: Generate native Xcode project
         run: cd ios-mobile5 && xcodegen generate
+      - name: Test deployed Gateway value compatibility
+        run: |
+          swiftc ios-mobile5/AstonMobile5/GatewayContract.swift ios-mobile5/tests/main.swift -o "$RUNNER_TEMP/contract-tests"
+          "$RUNNER_TEMP/contract-tests"
       - name: Build iPhone arm64 app without signing
         run: |
           xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/aston5" CODE_SIGNING_ALLOWED=NO build
@@ -57,13 +61,38 @@ jobs:
           test -s "$APP/AstonMobile5"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")" = "eu.astonserver.astontv.mobile5"
           /usr/bin/file "$APP/AstonMobile5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")" = "5.2.0"
+          lipo -verify_arch arm64 "$APP/AstonMobile5"
+          test ! -e "$APP/embedded.mobileprovision"
+          if codesign -d "$APP" 2>/dev/null; then echo 'Unexpected code signature'; exit 1; fi
+          xcrun vtool -show-build "$APP/AstonMobile5" | tee "$GITHUB_WORKSPACE/device-build.txt"
+          grep -q 'platform IOS' "$GITHUB_WORKSPACE/device-build.txt"
       - name: Package unsigned iPhone IPA
         run: |
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$RUNNER_TEMP/aston5/Build/Products/Release-iphoneos/AstonMobile5.app" "$RUNNER_TEMP/Payload/"
-          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.1.1-UNSIGNED.ipa" Payload
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.0-UNSIGNED.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.0-UNSIGNED.ipa"
+          shasum -a 256 "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.0-UNSIGNED.ipa" > "$GITHUB_WORKSPACE/SHA256SUMS.txt"
+      - name: Build and launch simulator (not a home-server playback test)
+        run: |
+          xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/aston-sim" CODE_SIGNING_ALLOWED=NO build
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          DEVICE=$(python3 -c 'import json,os; d=json.load(open(os.environ["RUNNER_TEMP"]+"/devices.json")); print(next(x["udid"] for group in d["devices"].values() for x in group if "iPhone" in x["name"]))')
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" "$RUNNER_TEMP/aston-sim/Build/Products/Debug-iphonesimulator/AstonMobile5.app"
+          xcrun simctl launch "$DEVICE" eu.astonserver.astontv.mobile5
+          sleep 5
+          xcrun simctl io "$DEVICE" screenshot "$GITHUB_WORKSPACE/simulator.png"
+          xcrun simctl list devices booted > "$GITHUB_WORKSPACE/simulator-device.txt"
       - uses: actions/upload-artifact@v4
         with:
-          name: AstonTV-Mobile-5.1.1-iPhone-Unsigned-IPA
-          path: AstonTV-Mobile-5.1.1-UNSIGNED.ipa
+          name: AstonTV-Mobile-5.2.0-iPhone-Unsigned-IPA
+          path: |
+            AstonTV-Mobile-5.2.0-UNSIGNED.ipa
+            SHA256SUMS.txt
+            device-build.txt
+            simulator.png
+            simulator-device.txt
           if-no-files-found: error
