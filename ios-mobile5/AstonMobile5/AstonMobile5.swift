@@ -242,7 +242,7 @@ final class TVEngine: ObservableObject {
         sequence += 1
         let current=sequence
         refresh?.cancel()
-        webView?.evaluateJavaScript("stop()", completionHandler:nil)
+        webView?.evaluateJavaScript("document.getElementById('stop')?.click()", completionHandler:nil)
         webPlayback=nil
         player.pause();player.replaceCurrentItem(with:nil)
         loading=true
@@ -269,7 +269,7 @@ final class TVEngine: ObservableObject {
         sequence += 1
         let current=sequence
         refresh?.cancel()
-        webView?.evaluateJavaScript("stop()", completionHandler:nil)
+        webView?.evaluateJavaScript("document.getElementById('stop')?.click()", completionHandler:nil)
         webPlayback=nil
         player.pause();player.replaceCurrentItem(with:nil)
         loading=true
@@ -320,7 +320,7 @@ final class TVEngine: ObservableObject {
     func stop() {
         sequence += 1;refresh?.cancel()
         itemObservation=nil
-        webView?.evaluateJavaScript("stop()",completionHandler:nil)
+        webView?.evaluateJavaScript("document.getElementById('stop')?.click()",completionHandler:nil)
         webPlayback=nil
         player.pause();player.replaceCurrentItem(with:nil)
         isPlaying=false;hasSeek=false;selected=nil;selectedCamera=nil

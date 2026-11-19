@@ -43,9 +43,10 @@ struct GatewayVideoView: UIViewRepresentable {
     }
     static func dismantleUIView(_ web:WKWebView,coordinator:Coordinator) {
         coordinator.active=false
-        web.evaluateJavaScript("stop()",completionHandler:nil)
+        web.evaluateJavaScript("document.getElementById('stop')?.click()",completionHandler:nil)
         web.configuration.userContentController.removeScriptMessageHandler(forName:"videoState")
         web.stopLoading()
+        web.loadHTMLString("",baseURL:nil)
     }
     @MainActor final class Coordinator:NSObject,WKNavigationDelegate,WKScriptMessageHandler {
         weak var engine:TVEngine?
@@ -58,30 +59,20 @@ struct GatewayVideoView: UIViewRepresentable {
             let same=url.scheme==playback.server.scheme && url.host==playback.server.host && url.port==playback.server.port
             decisionHandler(same || url.scheme=="blob" || url.scheme=="about" ? .allow:.cancel)
         }
-        func webView(_ web:WKWebView,didFinish navigation:WKNavigation!) {ready=true;start(web)}
+        func webView(_ web:WKWebView,didFinish navigation:WKNavigation!) {guard active else{return};ready=true;start(web)}
         func start(_ web:WKWebView) {
-            guard let data=try? JSONSerialization.data(withJSONObject:[playback.url,playback.name,playback.channel]),
-                  let args=String(data:data,encoding:.utf8) else {return}
-            let script="""
-            (function(){
-              if(typeof playback!=='function')throw Error('Gateway player unavailable');
-              var a=\(args),v=document.getElementById('video');
-              if(!v)throw Error('Video surface missing');
-              // CSSOM properties work with the Gateway's strict style-src policy.
-              document.body.style.margin='0';document.body.style.background='#000';document.body.style.overflow='hidden';
-              Array.from(document.body.children).forEach(function(node){if(node!==v)node.style.visibility='hidden';});
-              document.body.appendChild(v);v.setAttribute('playsinline','');
-              v.style.visibility='visible';v.style.position='fixed';v.style.inset='0';v.style.width='100%';v.style.height='100%';v.style.objectFit='contain';v.style.background='#000';
-              if(!v.dataset.astonEvents){v.dataset.astonEvents='1';
-                ['playing','pause','waiting','error'].forEach(function(event){v.addEventListener(event,function(){window.webkit.messageHandlers.videoState.postMessage({state:event});});});
-                v.addEventListener('timeupdate',function(){var r=v.seekable;window.webkit.messageHandlers.videoState.postMessage({seekable:!!(r.length&&r.end(r.length-1)-r.start(0)>2)});});
-                var statusNode=document.getElementById('status');
-                if(statusNode)new MutationObserver(function(){if(/грешка|неподдържан|липсва|изтече/i.test(statusNode.textContent))window.webkit.messageHandlers.videoState.postMessage({state:'error'});}).observe(statusNode,{childList:true,characterData:true,subtree:true});}
-              playback(a[0],a[1],null,'mpegts',a[2]);
-            })();
-            """
+            guard active,
+                  let data=try? JSONSerialization.data(withJSONObject:["channel":playback.channel,"requestId":UUID().uuidString]),
+                  let args=String(data:data,encoding:.utf8),
+                  let resource=Bundle.main.url(forResource:"GatewayPlayback",withExtension:"js"),
+                  let template=try? String(contentsOf:resource,encoding:.utf8) else {
+                engine?.status="Липсва компонентът на плейъра";return
+            }
+            let script=template.replacingOccurrences(of:"__ASTON_REQUEST__",with:args)
             web.evaluateJavaScript(script) { [weak self] _,error in
-                if error != nil {self?.engine?.status="Уеб плейърът не се зареди"}
+                if let error=error as NSError? {
+                    self?.engine?.status="Грешка при стартиране на плейъра (\(error.code))"
+                }
             }
         }
         func userContentController(_ controller:WKUserContentController,didReceive message:WKScriptMessage) {
@@ -95,6 +86,8 @@ struct GatewayVideoView: UIViewRepresentable {
             case "pause":engine.status="Пауза"
             case "waiting":engine.status="Буфериране…"
             case "error":engine.status="Грешка при възпроизвеждане"
+            case "pairing":engine.status="Gateway изисква повторно сдвояване"
+            case "missing-channel":engine.status="Каналът не се появи в Gateway. Опитай отново."
             default:break
             }
         }
@@ -103,4 +96,3 @@ struct GatewayVideoView: UIViewRepresentable {
         }
     }
 }
-
