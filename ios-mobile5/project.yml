@@ -1,0 +1,19 @@
+name: AstonMobile5
+options:
+  bundleIdPrefix: eu.astonserver
+targets:
+  AstonMobile5:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: AstonMobile5
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eu.astonserver.astontv.mobile5
+        PRODUCT_NAME: AstonMobile5
+        SWIFT_VERSION: "5.0"
+        INFOPLIST_FILE: AstonMobile5/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
