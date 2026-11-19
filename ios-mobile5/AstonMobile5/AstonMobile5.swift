@@ -84,7 +84,7 @@ final class TVEngine: ObservableObject {
     private var progressObserver: Any?
     private let session: URLSession
     var server: URL {
-        UserDefaults.standard.string(forKey:"aston.mobile5.server") == Self.remote.absoluteString ? Self.remote : Self.local
+        UserDefaults.standard.string(forKey:"aston.mobile5.server") == Self.local.absoluteString ? Self.local : Self.remote
     }
     init() {
         let c = URLSessionConfiguration.default
@@ -137,6 +137,12 @@ final class TVEngine: ObservableObject {
         } catch {
             paired=false
             let offline = (error as NSError).domain == NSURLErrorDomain
+            if offline && server.host == Self.local.host {
+                UserDefaults.standard.set(Self.remote.absoluteString,forKey:"aston.mobile5.server")
+                networkHint="Домашният Gateway е недостъпен. Преминах към публичния адрес."
+                await connect()
+                return
+            }
             status="Сървърът не отговаря"
             networkHint = offline
                 ? "Няма достъп до \(server.host ?? "") — провери Wi-Fi/VPN или избери външния адрес."
