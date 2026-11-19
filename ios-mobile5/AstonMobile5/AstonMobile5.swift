@@ -65,6 +65,8 @@ final class TVEngine: ObservableObject {
     @Published var searching = ""
     @Published var code = ""
     @Published var showPair = false
+    @Published var diagnostics = "Диагностиката още не е стартирана."
+    @Published var networkHint = ""
     @Published var paired = false
     @Published var loading = false
     @Published var isPlaying = false
@@ -102,7 +104,7 @@ final class TVEngine: ObservableObject {
         if let obs=progressObserver {player.removeTimeObserver(obs)}
     }
     private func query(_ path: String, post: [String:Any]? = nil) async throws -> [String:Any] {
-        var req = URLRequest(url:server.appendingPathComponent(path),timeoutInterval:20)
+        var req = URLRequest(url:server.appendingPathComponent(path),timeoutInterval:9)
         req.cachePolicy = .reloadIgnoringLocalCacheData
         if let post {
             req.httpMethod = "POST"
@@ -129,11 +131,19 @@ final class TVEngine: ObservableObject {
                 selected=channels.first{$0.id==last}
             }
             status="Готово · \(channels.count) канала"
+            networkHint=""
         } catch let e as NSError where e.code == 401 {
             paired=false;showPair=true;status="Въведи 8-цифрен код"
         } catch {
-            status="Няма връзка"
-            errorText=error.localizedDescription
+            paired=false
+            let offline = (error as NSError).domain == NSURLErrorDomain
+            status="Сървърът не отговаря"
+            networkHint = offline
+                ? "Няма достъп до \(server.host ?? "") — провери Wi-Fi/VPN или избери външния адрес."
+                : "Gateway: \(error.localizedDescription)"
+            diagnostics = networkHint
+            showPair=false
+            showSettings=true
         }
     }
     func pair() async {
@@ -157,7 +167,24 @@ final class TVEngine: ObservableObject {
         do {
             let r=try await query("api/public/cameras")
             cameras=((r["cameras"] as? [[String:Any]]) ?? []).map(TVCamera.init)
-        } catch {}
+        } catch {
+            diagnostics = "Камерите не се зареждат: \(error.localizedDescription)"
+            errorText = "Камери: \(error.localizedDescription)"
+        }
+    }
+    func diagnose() async {
+        diagnostics="Проверявам Gateway..."
+        do {
+            let r=try await query("healthz")
+            diagnostics="Gateway: \(r["version"] ?? "?") · готов: \(r["ready"] ?? false)"
+            guard paired else { diagnostics += "\nНяма сдвояване. Въведи код."; return }
+            do {
+                let d=try await query("api/public/diagnostic")
+                diagnostics += "\nCore: \(d["core"] ?? "?") · канали: \(d["channels"] ?? "?") · камери: \(d["cameras_enabled"] ?? "?")/\(d["cameras"] ?? "?") · HLS: \(d["hls_candidates"] ?? "?")"
+            } catch { diagnostics += "\nAPI диагностика: \(error.localizedDescription)" }
+        } catch {
+            diagnostics="Адрес: \(server.absoluteString)\nНяма връзка: \(error.localizedDescription).\nЗа 10.10.10.179 използвай домашен Wi-Fi или VPN; при 5G избери външния сървър."
+        }
     }
     func changeServer(_ u:URL) {
         stop()
@@ -207,7 +234,7 @@ final class TVEngine: ObservableObject {
         status="Свързване с \(cam.name)"
         defer {if current==sequence{loading=false}}
         do {
-            let r=try await query("api/public/camera-play",post:["camera":cam.id,"format":"hls"])
+            let r=try await query("api/public/camera-play",post:["camera":cam.id,"format":"mp4"])
             guard current==sequence else{return}
             try playURL(r)
             status="КАМЕРА · LIVE"
@@ -541,7 +568,9 @@ struct MobilePlayerHome:View {
             Button {Task{await tv.pair()}}label:{Text("Сдвояване").frame(maxWidth:.infinity).padding(15).fontWeight(.bold)}
                 .background(TVStyle.teal,in:RoundedRectangle(cornerRadius:12)).foregroundStyle(TVStyle.bg)
                 .disabled(tv.code.count != 8 || tv.loading)
+            Text("Сървър: \(tv.server.absoluteString)").font(.caption).foregroundStyle(TVStyle.muted)
             Button("Смени сървъра"){tv.showPair=false;tv.showSettings=true}.foregroundStyle(TVStyle.teal)
+            Button("Проверка на връзката"){Task {await tv.diagnose();tv.showPair=false;tv.showSettings=true}}.foregroundStyle(TVStyle.teal)
             Spacer()
         }.padding(25).frame(maxWidth:.infinity,maxHeight:.infinity)
             .background(TVStyle.bg).interactiveDismissDisabled()
@@ -582,8 +611,28 @@ struct MobilePlayerHome:View {
             List {
                 Button("Домашен сървър · 10.10.10.179:8424"){tv.showSettings=false;tv.changeServer(TVEngine.local)}
                 Button("Външен портал · tv.astonserver.eu"){tv.showSettings=false;tv.changeServer(TVEngine.remote)}
-                Text("Външният адрес може да е със стара версия на Gateway. Локалният изисква домашна Wi-Fi мрежа или VPN.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Section("Връзка") {
+                    Text("Избран: \(tv.server.absoluteString)").font(.caption.monospaced())
+                    if !tv.networkHint.isEmpty {
+                        Text(tv.networkHint).font(.callout).foregroundStyle(.orange)
+                    }
+                    Button("Провери връзката, Core, каналите и камерите") { Task {await tv.diagnose()} }
+                    Text(tv.diagnostics).font(.caption).textSelection(.enabled)
+                    Button("Опитай да се свържеш отново") {tv.showSettings=false; Task {await tv.connect()} }
+                }
+                Section("Сдвояване и устройства") {
+                    HStack {
+                        Text("Състояние")
+                        Spacer()
+                        Text(tv.paired ? "Сдвоено" : "Не е сдвоено").foregroundStyle(tv.paired ? .green : .orange)
+                    }
+                    Button("Въведи нов 8-цифрен код за сдвояване") {tv.showSettings=false;tv.showPair=true}
+                    Button("Обнови каналите и камерите") {Task {await tv.reload()}}
+                }
+                Section("За достъпа") {
+                    Text("Домашният адрес работи само през домашния Wi-Fi или VPN. За 5G използвай външния адрес, ако е конфигуриран да обслужва Mobile API. Самото сдвояване не прави локалния адрес достъпен през интернет.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }.navigationTitle("Сървър")
                 .toolbar{ToolbarItem(placement:.confirmationAction){Button("Готово"){tv.showSettings=false}}}
         }.preferredColorScheme(.dark)
