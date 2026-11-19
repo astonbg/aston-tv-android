@@ -470,7 +470,15 @@ struct MobilePlayerHome:View {
                     }
                 }
                 LazyVStack(spacing:8) {ForEach(filtered){channelRow($0)}}
-                if tv.channels.isEmpty {Text("Няма канали. Провери връзката с Aston TV Gateway.").foregroundStyle(TVStyle.muted)}
+                if tv.channels.isEmpty {
+                    VStack(alignment:.leading,spacing:12) {
+                        Text("Няма заредени канали").font(.headline)
+                        Text(tv.networkHint.isEmpty ? "Провери връзката и сдвояването. В 5G локалният адрес няма да работи без VPN." : tv.networkHint).font(.caption).foregroundStyle(TVStyle.muted)
+                        Button("Настройки и диагностика") {tv.showSettings=true}.buttonStyle(.borderedProminent)
+                        Button("Сдвояване с код") {tv.showPair=true}.buttonStyle(.bordered)
+                        Button("Опитай отново") {Task {await tv.connect()}}
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(18).background(TVStyle.panel,in:RoundedRectangle(cornerRadius:12))
+                }
             }.padding(15)
         }.scrollDismissesKeyboard(.interactively)
     }
@@ -504,7 +512,13 @@ struct MobilePlayerHome:View {
                         }.buttonStyle(.plain).disabled(!cam.enabled)
                     }
                 }
-                if tv.cameras.isEmpty {Text("Няма достъпни камери.").foregroundStyle(TVStyle.muted)}
+                if tv.cameras.isEmpty {
+                    VStack(alignment:.leading,spacing:10) {
+                        Text("Камерите не са заредени").font(.headline)
+                        Text(tv.diagnostics).font(.caption).foregroundStyle(TVStyle.muted)
+                        Button("Провери връзката с камерите") {tv.showSettings=true;Task {await tv.diagnose()}}.buttonStyle(.borderedProminent)
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(15)
+                }
             }.padding(15)
         }
     }
