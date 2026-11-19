@@ -1,0 +1,38 @@
+name: Build Aston TV Mobile 5 for iPhone
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ios-mobile5/**'
+      - '.github/workflows/build-mobile5-ios.yml'
+jobs:
+  iphone:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate native Xcode project
+        run: cd ios-mobile5 && xcodegen generate
+      - name: Build iPhone arm64 app without signing
+        run: |
+          xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/aston5" CODE_SIGNING_ALLOWED=NO build
+      - name: Verify bundle and executable
+        run: |
+          APP="$RUNNER_TEMP/aston5/Build/Products/Release-iphoneos/AstonMobile5.app"
+          test -s "$APP/AstonMobile5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")" = "eu.astonserver.astontv.mobile5"
+          /usr/bin/file "$APP/AstonMobile5"
+      - name: Package unsigned iPhone IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/aston5/Build/Products/Release-iphoneos/AstonMobile5.app" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.0.0-UNSIGNED.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AstonTV-Mobile-5.0.0-iPhone-Unsigned-IPA
+          path: AstonTV-Mobile-5.0.0-UNSIGNED.ipa
+          if-no-files-found: error
