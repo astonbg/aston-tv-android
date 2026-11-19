@@ -67,13 +67,16 @@ struct GatewayVideoView: UIViewRepresentable {
               if(typeof playback!=='function')throw Error('Gateway player unavailable');
               var a=\(args),v=document.getElementById('video');
               if(!v)throw Error('Video surface missing');
-              var style=document.getElementById('aston-mobile-video');
-              if(!style){style=document.createElement('style');style.id='aston-mobile-video';
-                style.textContent='body{margin:0!important;background:#000!important;overflow:hidden!important}body>*{visibility:hidden!important}body>video{visibility:visible!important;position:fixed!important;inset:0!important;width:100%!important;height:100%!important;object-fit:contain!important;background:#000!important}';document.head.appendChild(style);}
+              // CSSOM properties work with the Gateway's strict style-src policy.
+              document.body.style.margin='0';document.body.style.background='#000';document.body.style.overflow='hidden';
+              Array.from(document.body.children).forEach(function(node){if(node!==v)node.style.visibility='hidden';});
               document.body.appendChild(v);v.setAttribute('playsinline','');
+              v.style.visibility='visible';v.style.position='fixed';v.style.inset='0';v.style.width='100%';v.style.height='100%';v.style.objectFit='contain';v.style.background='#000';
               if(!v.dataset.astonEvents){v.dataset.astonEvents='1';
                 ['playing','pause','waiting','error'].forEach(function(event){v.addEventListener(event,function(){window.webkit.messageHandlers.videoState.postMessage({state:event});});});
-                v.addEventListener('timeupdate',function(){var r=v.seekable;window.webkit.messageHandlers.videoState.postMessage({seekable:!!(r.length&&r.end(r.length-1)-r.start(0)>2)});});}
+                v.addEventListener('timeupdate',function(){var r=v.seekable;window.webkit.messageHandlers.videoState.postMessage({seekable:!!(r.length&&r.end(r.length-1)-r.start(0)>2)});});
+                var statusNode=document.getElementById('status');
+                if(statusNode)new MutationObserver(function(){if(/грешка|неподдържан|липсва|изтече/i.test(statusNode.textContent))window.webkit.messageHandlers.videoState.postMessage({state:'error'});}).observe(statusNode,{childList:true,characterData:true,subtree:true});}
               playback(a[0],a[1],null,'mpegts',a[2]);
             })();
             """
@@ -100,3 +103,4 @@ struct GatewayVideoView: UIViewRepresentable {
         }
     }
 }
+
