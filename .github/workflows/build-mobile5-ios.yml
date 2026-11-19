@@ -61,9 +61,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$RUNNER_TEMP/aston5/Build/Products/Release-iphoneos/AstonMobile5.app" "$RUNNER_TEMP/Payload/"
-          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.1.0-UNSIGNED.ipa" Payload
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.1.1-UNSIGNED.ipa" Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: AstonTV-Mobile-5.1.0-iPhone-Unsigned-IPA
-          path: AstonTV-Mobile-5.1.0-UNSIGNED.ipa
+          name: AstonTV-Mobile-5.1.1-iPhone-Unsigned-IPA
+          path: AstonTV-Mobile-5.1.1-UNSIGNED.ipa
           if-no-files-found: error
