@@ -62,7 +62,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")" = "eu.astonserver.astontv.mobile5"
           /usr/bin/file "$APP/AstonMobile5"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")" = "5.2.0"
-          lipo -verify_arch arm64 "$APP/AstonMobile5"
+          lipo "$APP/AstonMobile5" -verify_arch arm64
           test ! -e "$APP/embedded.mobileprovision"
           if codesign -d "$APP" 2>/dev/null; then echo 'Unexpected code signature'; exit 1; fi
           xcrun vtool -show-build "$APP/AstonMobile5" | tee "$GITHUB_WORKSPACE/device-build.txt"
