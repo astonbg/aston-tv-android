@@ -494,6 +494,8 @@ struct MobilePlayerHome:View {
                     }
                 }
                 if tv.loading {Color.black.opacity(0.28); ProgressView().tint(TVStyle.teal).controlSize(.large)}
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture {controlsVisible.toggle();controlTick += 1}
                 VStack {
                     HStack {
                         Text(tv.status).font(.system(size:10,weight:.semibold)).lineLimit(1)
@@ -519,7 +521,6 @@ struct MobilePlayerHome:View {
             }
             .frame(height:height).clipped().accessibilityIdentifier("videoSurface")
             .contentShape(Rectangle())
-            .onTapGesture {controlsVisible.toggle();controlTick += 1}
             .onChange(of:tv.isPlaying){_ in controlTick += 1}
             .task(id:controlTick) {
                 guard tv.isPlaying,controlsVisible else{return}

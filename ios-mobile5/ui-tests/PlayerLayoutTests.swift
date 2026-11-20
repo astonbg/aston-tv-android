@@ -14,7 +14,10 @@ final class PlayerLayoutTests:XCTestCase {
         let fillButton=app.buttons.matching(NSPredicate(format:"label == %@", "Запълни")).firstMatch
         XCTAssertTrue(fillButton.exists)
         fillButton.tap()
-        XCTAssertTrue(app.staticTexts["Изрязани краища"].exists)
+        let wholeFrame=app.buttons.matching(NSPredicate(format:"label == %@", "Цял кадър")).firstMatch
+        let changed=wholeFrame.waitForExistence(timeout:3)
+        if !changed {print(app.debugDescription)}
+        XCTAssertTrue(changed,"Fill must change the visible control to Whole frame")
         attach(app,"portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         let wide=NSPredicate { _,_ in app.windows.firstMatch.frame.width>app.windows.firstMatch.frame.height && video.frame.height>app.windows.firstMatch.frame.height*0.90 }
