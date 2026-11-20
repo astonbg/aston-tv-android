@@ -10,12 +10,14 @@ final class PlayerLayoutTests:XCTestCase {
         XCTAssertTrue(video.waitForExistence(timeout:15))
         let portrait=app.windows.firstMatch.frame
         XCTAssertGreaterThan(video.frame.height,portrait.height*0.35)
-        XCTAssertTrue(app.buttons["videoFit"].exists)
-        app.buttons["videoFit"].tap()
+        // SwiftUI propagates the container identifier to its descendants.
+        let fillButton=app.buttons.matching(NSPredicate(format:"label == %@", "Запълни")).firstMatch
+        XCTAssertTrue(fillButton.exists)
+        fillButton.tap()
         XCTAssertTrue(app.staticTexts["Изрязани краища"].exists)
         attach(app,"portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
-        let wide=NSPredicate { _,_ in video.frame.width>video.frame.height }
+        let wide=NSPredicate { _,_ in app.windows.firstMatch.frame.width>app.windows.firstMatch.frame.height && video.frame.height>app.windows.firstMatch.frame.height*0.90 }
         expectation(for:wide,evaluatedWith:nil)
         waitForExpectations(timeout:10)
         XCTAssertGreaterThan(video.frame.width,app.windows.firstMatch.frame.width*0.95)
