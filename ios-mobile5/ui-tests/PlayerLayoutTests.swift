@@ -3,7 +3,7 @@ import XCTest
 final class PlayerLayoutTests:XCTestCase {
     func testPortraitLandscapeAndReturn() {
         let app=XCUIApplication()
-        app.launchArguments=["--ui-layout-test","-aston.mobile5.fill","NO"]
+        app.launchArguments=["--ui-layout-test"]
         XCUIDevice.shared.orientation = .portrait
         app.launch()
         let video=app.otherElements["videoSurface"].firstMatch

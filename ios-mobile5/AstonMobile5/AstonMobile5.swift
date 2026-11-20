@@ -402,6 +402,9 @@ struct RemoteImage:View {
 }
 @main
 struct AstonMobile5App:App {
+    init() {
+        if TVEngine.layoutTest {UserDefaults.standard.set(false,forKey:"aston.mobile5.fill")}
+    }
     var body:some Scene {WindowGroup{MobilePlayerHome()}}
 }
 struct MobilePlayerHome:View {
