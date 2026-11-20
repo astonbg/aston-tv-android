@@ -409,11 +409,12 @@ struct MobilePlayerHome:View {
     @State private var category="Всички"
     @State private var showFull=false
     @State private var suppressLandscape=false
+    @State private var landscapeLayout=false
     @State private var controlsVisible=true
     @State private var controlTick=0
     @State private var renaming:TVCamera?
     @State private var cameraName=""
-    @AppStorage("aston.mobile5.fill") private var fill=false
+    @AppStorage("aston.mobile5.fill") private var fill=true
     @AppStorage("aston.mobile5.resume") private var resume=false
     private var filtered:[TVChannel] {
         tv.channels.filter{c in
@@ -441,10 +442,11 @@ struct MobilePlayerHome:View {
                 bottomBar.frame(height:full ? 0 : 60).clipped().accessibilityHidden(full)
             }
             .background(TVStyle.bg)
-            .onChange(of:landscape){_ in suppressLandscape=false;showFull=false;controlsVisible=true}
+            .onAppear{landscapeLayout=landscape}
+            .onChange(of:landscape){value in landscapeLayout=value;suppressLandscape=false;showFull=false;controlsVisible=true}
             .statusBarHidden(full)
         }
-        .ignoresSafeArea(.container,edges:showFull ? .all : .horizontal)
+        .ignoresSafeArea(.container,edges:(showFull || (landscapeLayout && !suppressLandscape && (tv.selected != nil || tv.selectedCamera != nil))) ? .all : .horizontal)
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .task {await tv.connect()}

@@ -93,7 +93,12 @@ jobs:
           xcrun simctl io "$DEVICE" screenshot "$GITHUB_WORKSPACE/simulator.png"
           xcrun simctl list devices booted > "$GITHUB_WORKSPACE/simulator-device.txt"
           xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath "$RUNNER_TEMP/aston-sim" -resultBundlePath "$GITHUB_WORKSPACE/PlayerLayout.xcresult" CODE_SIGNING_ALLOWED=NO test
+      - name: Export layout screenshots
+        if: always()
+        run: |
+          if test -d PlayerLayout.xcresult; then xcrun xcresulttool export attachments --path PlayerLayout.xcresult --output-path layout-screenshots; fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: AstonTV-Mobile-5.3.0-iPhone-Unsigned-IPA
           path: |
@@ -103,4 +108,5 @@ jobs:
             simulator.png
             simulator-device.txt
             PlayerLayout.xcresult
+            layout-screenshots
           if-no-files-found: error
