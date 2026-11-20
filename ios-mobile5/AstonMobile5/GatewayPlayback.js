@@ -15,7 +15,7 @@
     });
     document.body.appendChild(video);
     video.setAttribute('playsinline', '');
-    Object.assign(video.style, {visibility:'visible', position:'fixed', inset:'0', width:'100%', height:'100%', objectFit:'contain', background:'#000'});
+    Object.assign(video.style, {visibility:'visible', position:'fixed', inset:'0', width:'100%', height:'100%', objectFit:window.__astonFill?'cover':'contain', background:'#000'});
     if (!video.dataset.astonEvents) {
         video.dataset.astonEvents = '1';
         ['playing', 'pause', 'waiting', 'error'].forEach(function (event) {

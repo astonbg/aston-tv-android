@@ -36,21 +36,19 @@ struct TVCamera: Identifiable {
     }
 }
 enum TVSection: Int, CaseIterable {
-    case channels, favorites, cameras, media
+    case channels, cameras, settings
     var name: String {
         switch self {
         case .channels:return "Телевизия"
-        case .favorites:return "Любими"
+        case .settings:return "Настройки"
         case .cameras:return "Камери"
-        case .media:return "Медия"
         }
     }
     var icon: String {
         switch self {
         case .channels:return "tv"
-        case .favorites:return "star.fill"
+        case .settings:return "gearshape"
         case .cameras:return "video.fill"
-        case .media:return "film.stack"
         }
     }
 }
@@ -82,6 +80,21 @@ final class TVEngine: ObservableObject {
     weak var webView: WKWebView?
     @Published var hasSeek = false
     @Published var favorites = Set(UserDefaults.standard.stringArray(forKey:"aston.mobile5.favs") ?? [])
+    @Published var recents = UserDefaults.standard.stringArray(forKey:"aston.mobile5.recents") ?? []
+    @Published var cameraNames = UserDefaults.standard.dictionary(forKey:"aston.mobile5.cameraNames") as? [String:String] ?? [:]
+    func cameraName(_ camera:TVCamera)->String {cameraNames[camera.id] ?? camera.name}
+    func rename(_ camera:TVCamera, name:String) {
+        let clean=String(name.trimmingCharacters(in:.whitespacesAndNewlines).prefix(60))
+        cameraNames[camera.id] = clean.isEmpty ? nil : clean
+        UserDefaults.standard.set(cameraNames,forKey:"aston.mobile5.cameraNames")
+    }
+    static var layoutTest:Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--ui-layout-test")
+        #else
+        return false
+        #endif
+    }
     let player = AVPlayer()
     private var refresh: Task<Void,Never>?
     private var sequence = 0
@@ -141,6 +154,10 @@ final class TVEngine: ObservableObject {
         return object
     }
     func connect() async {
+        if Self.layoutTest {
+            channels=[TVChannel(["id":"fixture","name":"Тест на оформлението"])]
+            selected=channels.first;status="Тест без видеопоток";return
+        }
         loading=true
         defer{loading=false}
         do {
@@ -148,7 +165,7 @@ final class TVEngine: ObservableObject {
             paired=true;showPair=false
             await reload()
             if selected == nil, let last=UserDefaults.standard.string(forKey:"aston.mobile5.last") {
-                selected=channels.first{$0.id==last}
+                if UserDefaults.standard.bool(forKey:"aston.mobile5.resume"), let channel=channels.first(where:{$0.id==last}) {await play(channel)}
             }
             networkHint=""
         } catch let e as NSError where e.code == 401 {
@@ -249,6 +266,8 @@ final class TVEngine: ObservableObject {
         selected=ch;selectedCamera=nil;section = .channels
         status="Зареждане на \(ch.name)"
         UserDefaults.standard.set(ch.id,forKey:"aston.mobile5.last")
+        recents.removeAll{$0==ch.id};recents.insert(ch.id,at:0);recents=Array(recents.prefix(20))
+        UserDefaults.standard.set(recents,forKey:"aston.mobile5.recents")
         defer {if current==sequence{loading=false}}
         do {
             let r=try await query("api/public/play",post:["channel_id":ch.id,"format":"auto"])
@@ -293,6 +312,12 @@ final class TVEngine: ObservableObject {
         }
     }
     func step(_ n:Int) {
+        if let current=selectedCamera {
+            let enabled=cameras.filter{$0.enabled}
+            guard let index=enabled.firstIndex(where:{$0.id==current.id}), !enabled.isEmpty else{return}
+            let next=enabled[(index+n+enabled.count)%enabled.count]
+            Task {await playCamera(next)};return
+        }
         guard !channels.isEmpty else{return}
         let idx=channels.firstIndex(where:{$0.id==selected?.id}) ?? (n>0 ? -1 : 0)
         let next=(idx+n+channels.count)%channels.count
@@ -330,7 +355,7 @@ final class TVEngine: ObservableObject {
         if favorites.contains(ch.id) {favorites.remove(ch.id)}else{favorites.insert(ch.id)}
         UserDefaults.standard.set(Array(favorites),forKey:"aston.mobile5.favs")
     }
-    var title:String {selected?.name ?? selectedCamera?.name ?? "Избери канал"}
+    var title:String {selected?.name ?? selectedCamera.map{cameraName($0)} ?? "Избери канал"}
     var now:String {selected?.now ?? ""}
     var next:String {selected?.next ?? ""}
     func logoURL(_ ch:TVChannel)->URL? {
@@ -347,6 +372,7 @@ final class TVEngine: ObservableObject {
 struct NativePlayerView:UIViewControllerRepresentable {
     let player:AVPlayer
     var controls=false
+    var fill=false
     func makeUIViewController(context:Context)->AVPlayerViewController {
         let vc=AVPlayerViewController()
         vc.player=player;vc.showsPlaybackControls=controls;vc.videoGravity = .resizeAspect
@@ -356,6 +382,7 @@ struct NativePlayerView:UIViewControllerRepresentable {
     func updateUIViewController(_ vc:AVPlayerViewController,context:Context) {
         if vc.player !== player {vc.player=player}
         vc.showsPlaybackControls=controls
+        vc.videoGravity = fill ? .resizeAspectFill : .resizeAspect
     }
 }
 struct RemoteImage:View {
@@ -381,10 +408,19 @@ struct MobilePlayerHome:View {
     @StateObject private var tv=TVEngine()
     @State private var category="Всички"
     @State private var showFull=false
+    @State private var suppressLandscape=false
+    @State private var controlsVisible=true
+    @State private var controlTick=0
+    @State private var renaming:TVCamera?
+    @State private var cameraName=""
+    @AppStorage("aston.mobile5.fill") private var fill=false
+    @AppStorage("aston.mobile5.resume") private var resume=false
     private var filtered:[TVChannel] {
         tv.channels.filter{c in
             let s="\(c.name) \(c.group) \(c.now)".lowercased()
             if !tv.searching.isEmpty && !s.localizedCaseInsensitiveContains(tv.searching){return false}
+            if category=="Любими" {return tv.favorites.contains(c.id)}
+            if category=="Последни" {return tv.recents.contains(c.id)}
             if category=="Филми"{return ["film","movie","филм","кино","action","comedy","horror"].contains(where:s.contains)}
             if category=="Сериали"{return ["series","сериал","shows"].contains(where:s.contains)}
             if category=="Музика"{return ["music","муз","house","chalga","чалга","mix"].contains(where:s.contains)}
@@ -392,22 +428,23 @@ struct MobilePlayerHome:View {
         }
     }
     var body:some View {
-        ZStack {
-            TVStyle.bg.ignoresSafeArea()
+        GeometryReader { geometry in
+            let landscape=geometry.size.width>geometry.size.height
+            let active=tv.selected != nil || tv.selectedCamera != nil
+            let full=showFull || (landscape && active && !suppressLandscape)
             VStack(spacing:0) {
-                topBar
-                playerArea
+                topBar.frame(height:full ? 0 : 52).clipped().accessibilityHidden(full)
+                playerArea(height:full ? geometry.size.height : max(240,geometry.size.height * 0.46), full:full, landscape:landscape)
                 Group {
-                    switch tv.section {
-                    case .channels: channelList
-                    case .favorites: favoritesList
-                    case .cameras: camerasList
-                    case .media: mediaList
-                    }
-                }
-                bottomBar
+                    if tv.section == .cameras {camerasList} else {channelList}
+                }.frame(maxHeight:full ? 0 : .infinity).clipped().accessibilityHidden(full)
+                bottomBar.frame(height:full ? 0 : 60).clipped().accessibilityHidden(full)
             }
+            .background(TVStyle.bg)
+            .onChange(of:landscape){_ in suppressLandscape=false;showFull=false;controlsVisible=true}
+            .statusBarHidden(full)
         }
+        .ignoresSafeArea(.container,edges:showFull ? .all : .horizontal)
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .task {await tv.connect()}
@@ -415,13 +452,10 @@ struct MobilePlayerHome:View {
         .sheet(isPresented:$tv.showEPG){guideSheet}
         .sheet(isPresented:$tv.showSettings){settingsSheet}
         .sheet(isPresented:$tv.showPair){pairSheet}
-        .fullScreenCover(isPresented:$showFull) {
-            ZStack(alignment:.topTrailing) {
-                Color.black.ignoresSafeArea()
-                NativePlayerView(player:tv.player,controls:true).ignoresSafeArea()
-                Button {showFull=false} label: {Image(systemName:"xmark").font(.headline).padding(13).background(.black.opacity(0.7),in:Circle())}
-                    .padding(18)
-            }
+        .alert("Име на камерата",isPresented:Binding(get:{renaming != nil},set:{if !$0 {renaming=nil}})) {
+            TextField("Име",text:$cameraName)
+            Button("Запази"){if let camera=renaming {tv.rename(camera,name:cameraName)};renaming=nil}
+            Button("Отказ",role:.cancel){renaming=nil}
         }
         .alert("Aston TV",isPresented:Binding(get:{tv.errorText != nil},set:{if !$0{tv.errorText=nil}})) {
             Button("OK",role:.cancel){tv.errorText=nil}
@@ -441,14 +475,14 @@ struct MobilePlayerHome:View {
             Button {tv.showSettings=true} label:{Image(systemName:"gearshape.fill").frame(width:33,height:36)}
         }.padding(.horizontal,15).padding(.vertical,8)
     }
-    private var playerArea:some View {
+    private func playerArea(height:CGFloat,full:Bool,landscape:Bool)->some View {
         VStack(spacing:0) {
             ZStack {
                 Color.black
                 if let playback=tv.webPlayback {
-                    GatewayVideoView(engine:tv,playback:playback)
+                    GatewayVideoView(engine:tv,playback:playback,fill:fill)
                 } else {
-                    NativePlayerView(player:tv.player).opacity(tv.selected != nil || tv.selectedCamera != nil ? 1 : 0)
+                    NativePlayerView(player:tv.player,fill:fill).opacity(tv.selected != nil || tv.selectedCamera != nil ? 1 : 0)
                 }
                 if tv.selected == nil && tv.selectedCamera == nil {
                     VStack(spacing:12) {
@@ -463,7 +497,7 @@ struct MobilePlayerHome:View {
                         Text(tv.status).font(.system(size:10,weight:.semibold)).lineLimit(1)
                             .padding(7).background(.black.opacity(0.7),in:Capsule())
                         Spacer()
-                        Button {tv.fullScreen {showFull=true}} label:{Image(systemName:"arrow.up.left.and.arrow.down.right").font(.system(size:16)).padding(8).background(.black.opacity(0.7),in:Circle())}
+                        Button {if full {showFull=false;suppressLandscape=landscape} else {showFull=true}} label:{Image(systemName:"arrow.up.left.and.arrow.down.right").font(.system(size:16)).padding(8).background(.black.opacity(0.7),in:Circle())}
                     }
                     Spacer()
                     HStack {
@@ -473,9 +507,23 @@ struct MobilePlayerHome:View {
                         Spacer()
                         Button {tv.step(1)} label:{Image(systemName:"chevron.right").font(.title2.bold()).frame(width:48,height:55).background(.black.opacity(0.5),in:RoundedRectangle(cornerRadius:12))}
                     }
-                }.padding(13)
+                    HStack {
+                        Button(fill ? "Цял кадър" : "Запълни") {fill.toggle()}.accessibilityIdentifier("videoFit")
+                        Spacer()
+                        if fill {Text("Изрязани краища").font(.caption)}
+                    }.padding(8).background(.black.opacity(0.65),in:Capsule())
+                }.padding(.horizontal,full ? 48 : 13).padding(.vertical,13)
+                    .opacity(controlsVisible ? 1 : 0).allowsHitTesting(controlsVisible)
             }
-            .aspectRatio(16/9,contentMode:.fit)
+            .frame(height:height).clipped().accessibilityIdentifier("videoSurface")
+            .contentShape(Rectangle())
+            .onTapGesture {controlsVisible.toggle();controlTick += 1}
+            .onChange(of:tv.isPlaying){_ in controlTick += 1}
+            .task(id:controlTick) {
+                guard tv.isPlaying,controlsVisible else{return}
+                try? await Task.sleep(nanoseconds:4_000_000_000)
+                if !Task.isCancelled {controlsVisible=false}
+            }
             .gesture(DragGesture(minimumDistance:55).onEnded{g in
                 if abs(g.translation.height)>abs(g.translation.width) {tv.step(g.translation.height<0 ? 1 : -1)}
                 else if abs(g.translation.width)>85 {tv.seek(g.translation.width<0 ? 10 : -10)}
@@ -499,7 +547,7 @@ struct MobilePlayerHome:View {
                     control("goforward.10","+10 сек",allowed:tv.hasSeek){tv.seek(10)}
                     control("stop.fill","Стоп"){tv.stop()}
                 }
-            }.padding(12).background(TVStyle.panel)
+            }.padding(12).background(TVStyle.panel).frame(height:full ? 0 : 104).clipped().accessibilityHidden(full)
         }
     }
     private func control(_ icon:String,_ title:String,allowed:Bool=true,action:@escaping ()->Void)->some View {
@@ -523,7 +571,7 @@ struct MobilePlayerHome:View {
                 }.padding(12).background(TVStyle.panel,in:RoundedRectangle(cornerRadius:12))
                 ScrollView(.horizontal,showsIndicators:false) {
                     HStack(spacing:8) {
-                        ForEach(["Всички","Филми","Сериали","Музика"],id:\.self){c in
+                        ForEach(["Всички","Любими","Последни","Филми","Сериали","Музика"],id:\.self){c in
                             Button {category=c} label:{Text(c).font(.system(size:12,weight:.semibold))
                                 .padding(.horizontal,15).padding(.vertical,9)
                                 .background(category==c ? TVStyle.teal:TVStyle.panel,in:Capsule())
@@ -571,12 +619,13 @@ struct MobilePlayerHome:View {
                                 ZStack {
                                     RoundedRectangle(cornerRadius:9).fill(Color.black)
                                     RemoteImage(url:tv.thumbURL(cam)).aspectRatio(16/9,contentMode:.fit)
-                                    VStack{HStack{Spacer();Circle().fill(cam.enabled ? Color.green:Color.gray).frame(width:7,height:7).padding(8)};Spacer()}
+                                    VStack{Spacer();Text("Преглед").font(.caption2).padding(4).background(.black.opacity(0.7))}
                                 }.aspectRatio(16/9,contentMode:.fit)
-                                Text(cam.name).font(.system(size:13,weight:.semibold))
+                                Text(tv.cameraName(cam)).font(.system(size:13,weight:.semibold))
                                 Text(cam.enabled ? "АКТИВИРАНА":"ИЗКЛЮЧЕНА").font(.system(size:10)).foregroundStyle(TVStyle.muted)
                             }.padding(9).background(TVStyle.panel,in:RoundedRectangle(cornerRadius:12))
                         }.buttonStyle(.plain).disabled(!cam.enabled)
+                        .contextMenu {Button("Преименувай"){renaming=cam;cameraName=tv.cameraName(cam)}}
                     }
                 }
                 if tv.cameras.isEmpty {
@@ -628,7 +677,7 @@ struct MobilePlayerHome:View {
     private var bottomBar:some View {
         HStack(spacing:0) {
             ForEach(TVSection.allCases,id:\.rawValue){item in
-                Button {tv.section=item}label:{
+                Button {if item == .settings {tv.showSettings=true} else {tv.section=item}}label:{
                     VStack(spacing:5) {Image(systemName:item.icon).font(.system(size:18));Text(item.name).font(.system(size:10,weight:.semibold))}
                         .foregroundStyle(tv.section==item ? TVStyle.teal:TVStyle.muted)
                         .frame(maxWidth:.infinity).frame(height:54)
@@ -692,6 +741,11 @@ struct MobilePlayerHome:View {
             List {
                 Button("Домашен сървър · 10.10.10.179:8424"){tv.showSettings=false;tv.changeServer(TVEngine.local)}
                 Button("Външен портал · tv.astonserver.eu"){tv.showSettings=false;tv.changeServer(TVEngine.remote)}
+                Section("Плейър") {
+                    Toggle("Продължи последния канал при отваряне",isOn:$resume)
+                    Toggle("Запълни видео зоната",isOn:$fill)
+                    Text("Запълването изрязва краищата. Изключи го за целия кадър. Завърти телефона за цял екран.").font(.caption)
+                }
                 Section("Връзка") {
                     Text("Избран: \(tv.server.absoluteString)").font(.caption.monospaced())
                     if !tv.networkHint.isEmpty {

@@ -13,6 +13,7 @@ struct GatewayPlayback: Equatable {
 struct GatewayVideoView: UIViewRepresentable {
     @ObservedObject var engine: TVEngine
     let playback: GatewayPlayback
+    var fill=false
     func makeCoordinator() -> Coordinator { Coordinator(engine, playback) }
     func makeUIView(context: Context) -> WKWebView {
         let config=WKWebViewConfiguration()
@@ -36,6 +37,8 @@ struct GatewayVideoView: UIViewRepresentable {
         return web
     }
     func updateUIView(_ web:WKWebView,context:Context) {
+        context.coordinator.fill=fill
+        web.evaluateJavaScript("window.__astonFill=\(fill ? "true" : "false");var v=document.getElementById('video');if(v)v.style.objectFit=window.__astonFill?'cover':'contain';",completionHandler:nil)
         if context.coordinator.playback != playback {
             context.coordinator.playback=playback
             if context.coordinator.ready { context.coordinator.start(web) }
@@ -51,6 +54,7 @@ struct GatewayVideoView: UIViewRepresentable {
     @MainActor final class Coordinator:NSObject,WKNavigationDelegate,WKScriptMessageHandler {
         weak var engine:TVEngine?
         var playback:GatewayPlayback
+        var fill=false
         var ready=false
         var active=true
         init(_ engine:TVEngine,_ playback:GatewayPlayback) {self.engine=engine;self.playback=playback}
@@ -68,7 +72,7 @@ struct GatewayVideoView: UIViewRepresentable {
                   let template=try? String(contentsOf:resource,encoding:.utf8) else {
                 engine?.status="Липсва компонентът на плейъра";return
             }
-            let script=template.replacingOccurrences(of:"__ASTON_REQUEST__",with:args)
+            let script="window.__astonFill=\(fill ? "true" : "false");" + template.replacingOccurrences(of:"__ASTON_REQUEST__",with:args)
             web.evaluateJavaScript(script) { [weak self] _,error in
                 if let error=error as NSError? {
                     self?.engine?.status="Грешка при стартиране на плейъра (\(error.code))"

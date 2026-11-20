@@ -67,7 +67,7 @@ jobs:
           test -s "$APP/GatewayPlayback.js"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")" = "eu.astonserver.astontv.mobile5"
           /usr/bin/file "$APP/AstonMobile5"
-          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")" = "5.2.1"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")" = "5.3.0"
           lipo "$APP/AstonMobile5" -verify_arch arm64
           test ! -e "$APP/embedded.mobileprovision"
           if codesign -d "$APP" 2>/dev/null; then echo 'Unexpected code signature'; exit 1; fi
@@ -77,9 +77,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$RUNNER_TEMP/aston5/Build/Products/Release-iphoneos/AstonMobile5.app" "$RUNNER_TEMP/Payload/"
-          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.1-UNSIGNED.ipa" Payload
-          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.1-UNSIGNED.ipa"
-          shasum -a 256 "$GITHUB_WORKSPACE/AstonTV-Mobile-5.2.1-UNSIGNED.ipa" > "$GITHUB_WORKSPACE/SHA256SUMS.txt"
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-5.3.0-UNSIGNED.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-5.3.0-UNSIGNED.ipa"
+          shasum -a 256 "$GITHUB_WORKSPACE/AstonTV-Mobile-5.3.0-UNSIGNED.ipa" > "$GITHUB_WORKSPACE/SHA256SUMS.txt"
       - name: Build and launch simulator (not a home-server playback test)
         run: |
           xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/aston-sim" CODE_SIGNING_ALLOWED=NO build
@@ -92,13 +92,15 @@ jobs:
           sleep 5
           xcrun simctl io "$DEVICE" screenshot "$GITHUB_WORKSPACE/simulator.png"
           xcrun simctl list devices booted > "$GITHUB_WORKSPACE/simulator-device.txt"
+          xcodebuild -project ios-mobile5/AstonMobile5.xcodeproj -scheme AstonMobile5 -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath "$RUNNER_TEMP/aston-sim" -resultBundlePath "$GITHUB_WORKSPACE/PlayerLayout.xcresult" CODE_SIGNING_ALLOWED=NO test
       - uses: actions/upload-artifact@v4
         with:
-          name: AstonTV-Mobile-5.2.1-iPhone-Unsigned-IPA
+          name: AstonTV-Mobile-5.3.0-iPhone-Unsigned-IPA
           path: |
-            AstonTV-Mobile-5.2.1-UNSIGNED.ipa
+            AstonTV-Mobile-5.3.0-UNSIGNED.ipa
             SHA256SUMS.txt
             device-build.txt
             simulator.png
             simulator-device.txt
+            PlayerLayout.xcresult
           if-no-files-found: error
