@@ -3,10 +3,12 @@ import android.app.*;
 import android.content.*;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Bitmap;
 import android.os.*;
 import android.text.*;
 import android.view.*;
 import android.widget.*;
+import android.widget.ImageView;
 import android.webkit.CookieManager;
 import androidx.media3.common.*;
 import androidx.media3.common.util.UnstableApi;
@@ -22,6 +24,7 @@ import java.util.concurrent.*;
 public final class MainActivity extends Activity {
     private final int bg=Color.rgb(10,14,22),panel=Color.rgb(28,36,48),teal=Color.rgb(61,204,232);
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private final ExecutorService imageIo=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
     GatewayClient api;
@@ -41,6 +44,9 @@ public final class MainActivity extends Activity {
     private Runnable refreshTicket;
     private Set<String> favorites;
     private List<String> recent;
+    private final Map<String,Bitmap> imageCache=Collections.synchronizedMap(new LinkedHashMap<String,Bitmap>(80,0.75f,true){
+        @Override protected boolean removeEldestEntry(Map.Entry<String,Bitmap> entry){return size()>64;}
+    });
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         prefs=getSharedPreferences("aston.mobile",MODE_PRIVATE);fill=prefs.getBoolean("fill",true);
@@ -104,10 +110,22 @@ public final class MainActivity extends Activity {
         String query=search.getText().toString().toLowerCase(Locale.ROOT);
         for(JSONObject item:list){String id=item.optString("id"),name=name(item,cameraTab);if(!name.toLowerCase(Locale.ROOT).contains(query))continue;if(!cameraTab&&filter.equals("Любими")&&!favorites.contains(id))continue;if(!cameraTab&&filter.equals("Последни")&&!recent.contains(id))continue;boolean cam=cameraTab;
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);String now=item.optJSONObject("now")==null?"":item.optJSONObject("now").optString("title");
+            ImageView picture=new ImageView(this);picture.setBackgroundColor(panel);picture.setScaleType(ImageView.ScaleType.CENTER_CROP);picture.setContentDescription(cam?"Снимка от камера "+name:"Лого на канал "+name);
+            row.addView(picture,new LinearLayout.LayoutParams(dp(76),dp(64)));
+            String imagePath=cam?"/api/public/thumb/"+id:item.optString("logo_url","");
+            if(!imagePath.isEmpty())loadImage(picture,imagePath);
             Button open=button(name+(now.isEmpty()?"":"\n"+now),()->play(item,cam));open.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);open.setEnabled(!cam||GatewayClient.enabled(item.opt("enabled")));row.addView(open,new LinearLayout.LayoutParams(0,dp(64),1));
             if(!cam)open.setOnLongClickListener(v->{JSONObject next=item.optJSONObject("next");new AlertDialog.Builder(this).setTitle(name).setMessage("СЕГА\n"+(now.isEmpty()?"Няма данни":now)+"\n\nСЛЕДВА\n"+(next==null?"Няма данни":next.optString("title","Няма данни"))).setPositiveButton("Затвори",null).show();return true;});
             row.addView(button(cam?"✎":favorites.contains(id)?"★":"☆",()->{if(cam)rename(item);else{if(!favorites.add(id))favorites.remove(id);prefs.edit().putStringSet("favorites",new HashSet<>(favorites)).apply();renderRows();}}),new LinearLayout.LayoutParams(dp(56),dp(64)));rows.addView(row);
         }if(rows.getChildCount()==0)rows.addView(label(paired?"Няма елементи за този филтър":"Няма зареден списък · отвори Настройки",15));
+    }
+    private void loadImage(ImageView target,String path){
+        target.setTag(path);Bitmap cached=imageCache.get(path);if(cached!=null){target.setImageBitmap(cached);return;}target.setImageDrawable(null);
+        GatewayClient client=api;
+        imageIo.execute(()->{
+            try{Bitmap bitmap=client.image(path);imageCache.put(path,bitmap);main.post(()->{if(!destroyed&&api==client&&path.equals(target.getTag()))target.setImageBitmap(bitmap);});}
+            catch(Exception ignored){}
+        });
     }
     private void rename(JSONObject item){EditText input=new EditText(this);input.setSingleLine(true);input.setText(name(item,true));new AlertDialog.Builder(this).setTitle("Име на камерата").setView(input).setPositiveButton("Запази",(d,w)->{String s=input.getText().toString().trim();prefs.edit().putString("camera."+item.optString("id"),s.isEmpty()?item.optString("name"):s.substring(0,Math.min(60,s.length()))).apply();renderRows();if(selectedCamera&&selected!=null)title.setText(name(selected,true));}).setNegativeButton("Отказ",null).show();}
     private interface Work {JSONObject run(GatewayClient client)throws Exception;}
@@ -151,11 +169,11 @@ public final class MainActivity extends Activity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Сдвояване").setView(code).setPositiveButton("Свържи",null).setNegativeButton("Отказ",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=code.getText().toString();if(!value.matches("[0-9]{8}")){code.setError("Нужни са 8 цифри");return;}dialog.dismiss();request(c->c.request("api/public/pair",new JSONObject().put("code",value)),r->connect());});
     }
     private void settings(){String[] options={"Домашен сървър (Wi-Fi/VPN)","Външен сървър (интернет)","Сдвояване с код","Обнови списъците",prefs.getBoolean("resume",false)?"Изключи последния канал при отваряне":"Продължи последния канал при отваряне","Диагностика"};
-        new AlertDialog.Builder(this).setTitle("Настройки · 5.3.0").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
+        new AlertDialog.Builder(this).setTitle("Настройки · 5.3.1").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
     }
     @Override public void onBackPressed(){if(isFull()){manualFull=false;suppressLandscape=true;layout();return;}long now=System.currentTimeMillis();if(now-lastBack<1800)super.onBackPressed();else{lastBack=now;Toast.makeText(this,"Назад отново за изход",Toast.LENGTH_SHORT).show();}}
     @Override public boolean dispatchKeyEvent(KeyEvent e){if(e.getAction()==KeyEvent.ACTION_DOWN){switch(e.getKeyCode()){case KeyEvent.KEYCODE_MEDIA_NEXT:step(1);return true;case KeyEvent.KEYCODE_MEDIA_PREVIOUS:step(-1);return true;case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:if(player.isPlaying())player.pause();else player.play();return true;}}return super.dispatchKeyEvent(e);}
     @Override protected void onResume(){super.onResume();foreground=true;}
     @Override protected void onPause(){foreground=false;player.pause();super.onPause();}
-    @Override protected void onDestroy(){destroyed=true;generation++;main.removeCallbacksAndMessages(null);io.shutdownNow();playerView.setPlayer(null);player.release();super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;generation++;main.removeCallbacksAndMessages(null);io.shutdownNow();imageIo.shutdownNow();imageCache.clear();playerView.setPlayer(null);player.release();super.onDestroy();}
 }

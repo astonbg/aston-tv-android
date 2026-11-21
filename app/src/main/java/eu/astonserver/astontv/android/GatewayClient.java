@@ -1,5 +1,7 @@
 package eu.astonserver.astontv.android;
 import android.webkit.CookieManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
@@ -31,6 +33,28 @@ final class GatewayClient {
             ByteArrayOutputStream bytes=new ByteArrayOutputStream();
             try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(bytes.size()+n>4*1024*1024)throw new IOException("Прекалено голям отговор");bytes.write(b,0,n);}}
             return new JSONObject(bytes.toString("UTF-8"));
+        } finally {c.disconnect();}
+    }
+    Bitmap image(String path) throws Exception {
+        if(!path.matches("/api/public/(?:logo/[A-Za-z0-9_-]{1,160}|thumb/cam[1-8])"))throw new IOException("Invalid image path");
+        URL url=new URL(new URL(base),path);
+        HttpURLConnection c=(HttpURLConnection)url.openConnection();
+        c.setConnectTimeout(8000);c.setReadTimeout(12000);c.setInstanceFollowRedirects(false);
+        String cookie=CookieManager.getInstance().getCookie(base);
+        if(cookie!=null)c.setRequestProperty("Cookie",cookie);
+        c.setRequestProperty("Accept","image/png,image/jpeg");
+        try {
+            int status=c.getResponseCode();
+            if(status<200||status>=300)throw new Failure(status,"Изображението не е достъпно (HTTP "+status+")");
+            String type=c.getContentType();
+            if(type==null||!(type.toLowerCase(Locale.ROOT).startsWith("image/png")||type.toLowerCase(Locale.ROOT).startsWith("image/jpeg")))throw new IOException("Gateway върна невалидно изображение");
+            int declared=c.getContentLength();
+            if(declared>1_500_000)throw new IOException("Изображението е прекалено голямо");
+            ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] chunk=new byte[8192];int n;
+            try(InputStream in=c.getInputStream()){while((n=in.read(chunk))!=-1){if(bytes.size()+n>1_500_000)throw new IOException("Изображението е прекалено голямо");bytes.write(chunk,0,n);}}
+            Bitmap bitmap=BitmapFactory.decodeByteArray(bytes.toByteArray(),0,bytes.size());
+            if(bitmap==null)throw new IOException("Gateway върна невалидно изображение");
+            return bitmap;
         } finally {c.disconnect();}
     }
     String mediaUrl(String value) throws Exception {

@@ -2,6 +2,8 @@ package eu.astonserver.astontv.android;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
+import android.util.Base64;
+import android.widget.ImageView;
 import android.os.Environment;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -22,14 +24,17 @@ public class PlaybackTest {
     private MockWebServer server;
     private byte[] transport;
     private volatile boolean cookieSeen;
+    private final CountDownLatch imagesSeen=new CountDownLatch(2);
+    private final byte[] pixel=Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p4sAAAAASUVORK5CYII=",Base64.DEFAULT);
     @Before public void setup()throws Exception {
         try(InputStream in=InstrumentationRegistry.getInstrumentation().getContext().getAssets().open("sample.ts");ByteArrayOutputStream out=new ByteArrayOutputStream()) {byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);transport=out.toByteArray();}
         server=new MockWebServer();
         server.setDispatcher(new Dispatcher(){@Override public MockResponse dispatch(RecordedRequest r){
             String p=r.getPath();
             if(p.equals("/api/public/me"))return json("{}").addHeader("Set-Cookie","aston_public_sid=fixture; Path=/; HttpOnly");
-            if(p.equals("/api/public/channels"))return json("{\"channels\":[{\"id\":\"one\",\"name\":\"Тест телевизия\"}]}");
+            if(p.equals("/api/public/channels"))return json("{\"channels\":[{\"id\":\"one\",\"name\":\"Тест телевизия\",\"logo_url\":\"/api/public/logo/0123456789abcdef01234567\"}]}");
             if(p.equals("/api/public/cameras"))return json("{\"cameras\":[{\"id\":\"cam1\",\"name\":\"Тест камера\",\"enabled\":1}]}");
+            if(p.equals("/api/public/logo/0123456789abcdef01234567")||p.equals("/api/public/thumb/cam1")){if(!String.valueOf(r.getHeader("Cookie")).contains("aston_public_sid=fixture"))return new MockResponse().setResponseCode(401);imagesSeen.countDown();return new MockResponse().addHeader("Content-Type","image/png").setBody(new Buffer().write(pixel));}
             if(p.equals("/api/public/play"))return json("{\"url\":\"/media/tv\",\"format\":\"mpegts\"}");
             if(p.equals("/api/public/camera-play"))return json("{\"url\":\"/media/camera\",\"format\":\"hls\"}");
             if(p.startsWith("/media/")){
@@ -45,6 +50,14 @@ public class PlaybackTest {
     @Test public void actualFramesRotateAndCameraHls()throws Exception {
         Intent intent=new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).putExtra("test_server","http://127.0.0.1:"+server.getPort()+"/");
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(intent)){
+            scenario.onActivity(a->assertEquals("Activity must follow device rotation",ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR,a.getRequestedOrientation()));
+            assertTrue("Gateway channel logo must load",imagesSeen.await(1,TimeUnit.SECONDS));
+            scenario.onActivity(a->a.tab(true));
+            assertTrue("Gateway camera snapshot must load",imagesSeen.await(10,TimeUnit.SECONDS));
+            Thread.sleep(300);
+            scenario.onActivity(a->{int loaded=loadedImages(a);assertEquals("Camera snapshot must decode",1,loaded);});
+            scenario.onActivity(a->a.tab(false));
+            scenario.onActivity(a->assertEquals("Channel logo must decode",1,loadedImages(a)));
             scenario.onActivity(a->a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
             Thread.sleep(1500);
             CountDownLatch tvFrame=new CountDownLatch(1);
@@ -60,5 +73,6 @@ public class PlaybackTest {
             scenario.onActivity(a->{assertFalse(a.isFull());assertTrue(a.player.isPlaying());});shot("portrait-return");
         }
     }
+    private int loadedImages(MainActivity a){int loaded=0;for(int i=0;i<a.rows.getChildCount();i++)if(a.rows.getChildAt(i) instanceof android.widget.LinearLayout){android.widget.LinearLayout row=(android.widget.LinearLayout)a.rows.getChildAt(i);if(row.getChildCount()>0&&row.getChildAt(0) instanceof ImageView&&((ImageView)row.getChildAt(0)).getDrawable()!=null)loaded++;}return loaded;}
     private void shot(String name)throws Exception {Bitmap bitmap=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();File dir=new File(InstrumentationRegistry.getInstrumentation().getTargetContext().getFilesDir(),"screenshots");dir.mkdirs();try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}}
 }
