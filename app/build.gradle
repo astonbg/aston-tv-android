@@ -3,11 +3,24 @@ android {
     namespace 'eu.astonserver.astontv.android'
     compileSdk 35
     defaultConfig {
-        applicationId 'eu.astonserver.astontv.android.premium411'
+        applicationId 'eu.astonserver.astontv.android.mobile'
         minSdk 24
         targetSdk 35
-        versionCode 40101
-        versionName '4.1.1'
+        versionCode 50300
+        versionName '5.3.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildFeatures { buildConfig true }
+    buildTypes { release { signingConfig signingConfigs.debug } }
+}
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.8.0'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.8.0'
+    implementation 'androidx.media3:media3-ui:1.8.0'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'junit:junit:4.13.2'
 }

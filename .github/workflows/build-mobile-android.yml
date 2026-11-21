@@ -1,0 +1,71 @@
+name: Build and test Aston TV Android Mobile
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/iphone-recovery']
+    paths: ['app/**', '.github/workflows/build-mobile-android.yml']
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Generate real test transport stream
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          mkdir -p app/src/androidTest/assets
+          ffmpeg -f lavfi -i testsrc2=size=320x180:rate=15 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 30 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 30 -c:a aac -f mpegts app/src/androidTest/assets/sample.ts
+      - name: Compile APK and instrumentation tests
+        run: gradle :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest --no-daemon
+      - name: Verify signed APK
+        run: |
+          SDK_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          "$SDK_TOOLS/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk | tee signing.txt
+          "$SDK_TOOLS/aapt" dump badging app/build/outputs/apk/release/app-release.apk | tee package.txt
+          grep -F "eu.astonserver.astontv.android.mobile" package.txt
+          grep -F "versionName='5.3.0'" package.txt
+          cp app/build/outputs/apk/release/app-release.apk AstonTV-Mobile-5.3.0-Android.apk
+          sha256sum AstonTV-Mobile-5.3.0-Android.apk > SHA256SUMS.txt
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Decode TV and HLS camera; rotate Android 11 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            gradle :app:connectedDebugAndroidTest --no-daemon
+            adb pull /sdcard/Android/data/eu.astonserver.astontv.android.mobile/files/screenshots android-screenshots
+            adb install -r app/build/outputs/apk/release/app-release.apk
+            adb shell am start -W -n eu.astonserver.astontv.android.mobile/eu.astonserver.astontv.android.MainActivity
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AstonTV-Mobile-5.3.0-Android
+          path: |
+            AstonTV-Mobile-5.3.0-Android.apk
+            SHA256SUMS.txt
+            signing.txt
+            package.txt
+            android-screenshots
+            app/build/reports/androidTests
+            app/build/outputs/androidTest-results
+          if-no-files-found: error
