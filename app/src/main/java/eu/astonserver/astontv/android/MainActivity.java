@@ -43,6 +43,12 @@ public final class MainActivity extends Activity {
     private volatile int generation;
     private long lastBack;
     private Runnable refreshTicket,recovery; private int retryAttempts; private boolean vod; private AlertDialog pairingDialog;
+    private boolean resumePlayback,carMode;
+    private long lastPlaybackStart;
+    private android.net.ConnectivityManager connectivity;
+    private final android.net.ConnectivityManager.NetworkCallback networkChanges=new android.net.ConnectivityManager.NetworkCallback(){
+        @Override public void onAvailable(android.net.Network network){main.post(()->{if(!destroyed&&foreground&&selected!=null&&!vod&&retryAttempts>0){retryAttempts=0;play(selected,selectedCamera);}});}
+    };
     private Set<String> favorites;
     private List<String> recent;
     private final Map<String,Bitmap> imageCache=Collections.synchronizedMap(new LinkedHashMap<String,Bitmap>(80,0.75f,true){
@@ -50,7 +56,7 @@ public final class MainActivity extends Activity {
     });
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
-        prefs=getSharedPreferences("aston.mobile",MODE_PRIVATE);fill=prefs.getBoolean("fill",true);
+        prefs=getSharedPreferences("aston.mobile",MODE_PRIVATE);carMode=prefs.getBoolean("carMode",getResources().getConfiguration().smallestScreenWidthDp>=600);fill=prefs.getBoolean("fill",true);
         favorites=new HashSet<>(prefs.getStringSet("favorites",Collections.emptySet()));recent=new ArrayList<>();
         try{JSONArray r=new JSONArray(prefs.getString("recent","[]"));for(int i=0;i<r.length();i++)recent.add(r.getString(i));}catch(Exception ignored){}
         String server=prefs.getString("server",GatewayClient.LOCAL);if(!server.equals(GatewayClient.REMOTE))server=GatewayClient.LOCAL;
@@ -64,16 +70,19 @@ public final class MainActivity extends Activity {
             @Override public void onIsPlayingChanged(boolean playing){video.setKeepScreenOn(playing);if(playing)status.setText(vod?"Запис · използвай −10/+10 сек":"НА ЖИВО");else if(player.getPlaybackState()==Player.STATE_READY)status.setText("Пауза");}
             @Override public void onPlayerError(PlaybackException error){status.setText("Връзката с видеото прекъсна");scheduleRecovery();playerView.showController();}
                     @Override public void onRenderedFirstFrame(){retryAttempts=0;}
-        });connect();
+        });
+        connectivity=(android.net.ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+        if(connectivity!=null)connectivity.registerDefaultNetworkCallback(networkChanges);
+        connect();
     }
     private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
     private TextView label(String value,int size){TextView v=new TextView(this);v.setText(value);v.setTextColor(Color.WHITE);v.setTextSize(size);v.setPadding(dp(10),dp(4),dp(10),dp(4));return v;}
-    private Button button(String value,Runnable action){Button b=new Button(this);b.setText(value);b.setTextSize(14);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(8),0,dp(8),0);b.setMinHeight(dp(48));b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel));b.setOnClickListener(v->action.run());return b;}
-    private void add(LinearLayout row,View v){row.addView(v,new LinearLayout.LayoutParams(0,dp(50),1));}
+    private Button button(String value,Runnable action){Button b=new Button(this);b.setText(value);b.setTextSize(carMode?18:14);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(8),0,dp(8),0);b.setMinHeight(dp(48));b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel));b.setOnClickListener(v->action.run());return b;}
+    private void add(LinearLayout row,View v){row.addView(v,new LinearLayout.LayoutParams(0,dp(carMode?60:50),1));}
     private LinearLayout vertical(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
     private void buildUI(){
         shell=vertical();shell.setBackgroundColor(bg);setContentView(shell);shell.setFitsSystemWindows(true);
-        header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);TextView logo=label("ASTON TV · MOBILE",18);logo.setTextColor(teal);header.addView(logo,new LinearLayout.LayoutParams(0,dp(50),1));header.addView(button("↻",this::connect),new LinearLayout.LayoutParams(dp(52),dp(50)));shell.addView(header);
+        header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);TextView logo=label("ASTON TV · MOBILE",18);logo.setTextColor(teal);header.addView(logo,new LinearLayout.LayoutParams(0,dp(carMode?60:50),1));header.addView(button("↻",this::connect),new LinearLayout.LayoutParams(dp(52),dp(50)));shell.addView(header);
         video=new FrameLayout(this);video.setContentDescription("Видео зона");video.setBackgroundColor(Color.BLACK);
         playerView=new PlayerView(this);playerView.setPlayer(player);playerView.setControllerShowTimeoutMs(4000);playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);video.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
@@ -188,7 +197,7 @@ public final class MainActivity extends Activity {
         request(c->c.request("api/public/cameras",null),r->{cameras=r.optJSONArray("cameras");if(cameras==null)cameras=new JSONArray();renderRows();});
     }
     void play(JSONObject item,boolean camera){
-        if(camera&&!GatewayClient.enabled(item.opt("enabled")))return;vod=false;if(recovery!=null)main.removeCallbacks(recovery);selected=item;selectedCamera=camera;cameraTab=camera;int seq=++generation;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);
+        if(camera&&!GatewayClient.enabled(item.opt("enabled")))return;lastPlaybackStart=System.currentTimeMillis();vod=false;if(recovery!=null)main.removeCallbacks(recovery);selected=item;selectedCamera=camera;cameraTab=camera;int seq=++generation;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);
         player.stop();player.clearMediaItems();title.setText(name(item,camera));status.setText("Зареждане…");suppressLandscape=false;layout();playerView.showController();
         if(!camera){String id=item.optString("id");recent.remove(id);recent.add(0,id);if(recent.size()>20)recent.remove(recent.size()-1);prefs.edit().putString("recent",new JSONArray(recent).toString()).putString("last",id).apply();}
         request(c->{JSONObject body=new JSONObject();body.put(camera?"camera":"channel_id",item.getString("id"));body.put("format",camera?"hls":"auto");return c.request(camera?"api/public/camera-play":"api/public/play",body);},r->{
@@ -206,13 +215,13 @@ public final class MainActivity extends Activity {
         if(isFinishing()||destroyed||(pairingDialog!=null&&pairingDialog.isShowing()))return;EditText code=new EditText(this);code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});code.setHint("8-цифрен код от Aston Studio");
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Сдвояване").setView(code).setPositiveButton("Свържи",null).setNegativeButton("Отказ",null).create();pairingDialog=dialog;dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=code.getText().toString();if(!value.matches("[0-9]{8}")){code.setError("Нужни са 8 цифри");return;}dialog.dismiss();request(c->c.request("api/public/pair",new JSONObject().put("code",value)),r->connect());});
     }
-    private void settings(){String[] options={"Домашен сървър (Wi-Fi/VPN)","Външен сървър (интернет)","Сдвояване с код","Обнови списъците",prefs.getBoolean("resume",false)?"Изключи последния канал при отваряне":"Продължи последния канал при отваряне","Диагностика"};
-        new AlertDialog.Builder(this).setTitle("Настройки · 5.4.0").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;imageCache.clear();channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
+    private void settings(){String[] options={"Домашен сървър (Wi-Fi/VPN)","Външен сървър (интернет)","Сдвояване с код","Обнови списъците",prefs.getBoolean("resume",false)?"Изключи последния канал при отваряне":"Продължи последния канал при отваряне",carMode?"Изключи режим TS18":"Включи режим TS18","Диагностика"};
+        new AlertDialog.Builder(this).setTitle("Настройки · 5.4.0").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;imageCache.clear();channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else if(n==5){prefs.edit().putBoolean("carMode",!carMode).apply();recreate();}else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
     }
     @Override public void onBackPressed(){if(isFull()){manualFull=false;suppressLandscape=true;layout();return;}long now=System.currentTimeMillis();if(now-lastBack<1800)super.onBackPressed();else{lastBack=now;Toast.makeText(this,"Назад отново за изход",Toast.LENGTH_SHORT).show();}}
     @Override public boolean dispatchKeyEvent(KeyEvent e){if(e.getAction()==KeyEvent.ACTION_DOWN){switch(e.getKeyCode()){case KeyEvent.KEYCODE_MEDIA_NEXT:step(1);return true;case KeyEvent.KEYCODE_MEDIA_PREVIOUS:step(-1);return true;case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:if(player.isPlaying())player.pause();else player.play();return true;}}return super.dispatchKeyEvent(e);}
     private final Runnable refreshCatalog=new Runnable(){public void run(){if(destroyed)return;if(foreground){if(cameraTab&&!isFull())renderRows();else if(!cameraTab)reload();}main.postDelayed(this,60000);}};
-    @Override protected void onResume(){super.onResume();foreground=true;main.removeCallbacks(refreshCatalog);main.postDelayed(refreshCatalog,60000);}
-    @Override protected void onPause(){foreground=false;main.removeCallbacks(refreshCatalog);if(recovery!=null)main.removeCallbacks(recovery);player.pause();super.onPause();}
-    @Override protected void onDestroy(){destroyed=true;generation++;main.removeCallbacksAndMessages(null);io.shutdownNow();imageIo.shutdownNow();imageCache.clear();playerView.setPlayer(null);player.release();super.onDestroy();}
+    @Override protected void onResume(){super.onResume();foreground=true;if(resumePlayback&&selected!=null){if(!vod&&System.currentTimeMillis()-lastPlaybackStart>20*60*1000)play(selected,selectedCamera);else player.play();}main.removeCallbacks(refreshCatalog);main.postDelayed(refreshCatalog,60000);}
+    @Override protected void onPause(){resumePlayback=player.getPlayWhenReady();foreground=false;main.removeCallbacks(refreshCatalog);if(recovery!=null)main.removeCallbacks(recovery);player.pause();super.onPause();}
+    @Override protected void onDestroy(){destroyed=true;if(connectivity!=null)connectivity.unregisterNetworkCallback(networkChanges);generation++;main.removeCallbacksAndMessages(null);io.shutdownNow();imageIo.shutdownNow();imageCache.clear();playerView.setPlayer(null);player.release();super.onDestroy();}
 }

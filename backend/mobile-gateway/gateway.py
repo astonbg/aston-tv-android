@@ -296,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.request_guard():return
         path,q=self.part()
-        if path=='/healthz':return self.respond(200,{'ok':True,'version':'4.0.0','ready':True})
+        if path=='/healthz':return self.respond(200,{'ok':True,'version':'4.1.0','ready':True})
         if path=='/health/pixel.gif':
             # 1x1 GIF, usable for cross-origin reachability probes from packaged clients.
             pixel=base64.b64decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==')

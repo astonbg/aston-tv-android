@@ -24,6 +24,7 @@ public class PlaybackTest {
     private MockWebServer server;
     private byte[] transport,recording;
     private volatile boolean cookieSeen;
+    private final java.util.concurrent.atomic.AtomicInteger playRequests=new java.util.concurrent.atomic.AtomicInteger();
     private final CountDownLatch logoSeen=new CountDownLatch(1),snapshotSeen=new CountDownLatch(1);
     private final byte[] pixel=fixturePng();
     private static byte[] fixturePng(){
@@ -41,6 +42,7 @@ public class PlaybackTest {
             if(p.equals("/api/public/channels"))return json("{\"channels\":[{\"id\":\"one\",\"name\":\"Тест телевизия\",\"logo_url\":\"/api/public/logo/0123456789abcdef01234567\"}]}");
             if(p.equals("/api/public/cameras"))return json("{\"cameras\":[{\"id\":\"cam1\",\"name\":\"Тест камера\",\"enabled\":1}]}");
             if(p.equals("/api/public/logo/0123456789abcdef01234567")||p.equals("/api/public/thumb/cam1")){if(!String.valueOf(r.getHeader("Cookie")).contains("aston_public_sid=fixture"))return new MockResponse().setResponseCode(401);if(p.contains("/thumb/"))snapshotSeen.countDown();else logoSeen.countDown();return new MockResponse().addHeader("Content-Type","image/png").setBody(new Buffer().write(pixel));}
+            if(p.equals("/api/public/play")&&playRequests.incrementAndGet()==1)return new MockResponse().setResponseCode(503);
             if(p.equals("/api/public/play"))return json("{\"url\":\"/media/tv\",\"format\":\"mpegts\"}");
             if(p.equals("/api/public/camera-play"))return json("{\"url\":\"/media/camera\",\"format\":\"hls\"}");
             if(p.equals("/api/public/vod/resolve"))return json("{\"url\":\"/media/vod\",\"title\":\"EPG Recording\",\"seek_to\":0}");
@@ -70,7 +72,7 @@ public class PlaybackTest {
             Thread.sleep(1500);
             CountDownLatch tvFrame=new CountDownLatch(1);
             scenario.onActivity(a->{a.player.addListener(new Player.Listener(){@Override public void onRenderedFirstFrame(){tvFrame.countDown();}});try{a.play(new JSONObject("{\"id\":\"one\",\"name\":\"Тест телевизия\"}"),false);}catch(Exception e){throw new AssertionError(e);}});
-            assertTrue("MPEG-TS must render an actual frame",tvFrame.await(30,TimeUnit.SECONDS));assertTrue("Gateway cookie reaches media request",cookieSeen);
+            assertTrue("MPEG-TS must render an actual frame",tvFrame.await(30,TimeUnit.SECONDS));assertTrue("Gateway cookie reaches media request",cookieSeen);assertTrue("Transient play failure must recover",playRequests.get()>=2);
             scenario.onActivity(a->{assertTrue(a.video.getHeight()>a.getWindow().getDecorView().getHeight()*0.3);assertFalse(a.isFull());});shot("portrait");
             scenario.onActivity(a->a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));Thread.sleep(1800);
             scenario.onActivity(a->{assertTrue(a.isFull());assertTrue(a.video.getWidth()>a.video.getHeight());assertTrue(a.video.getHeight()>a.getWindow().getDecorView().getHeight()*0.85);assertTrue(a.player.isPlaying());});shot("landscape");
@@ -92,8 +94,13 @@ public class PlaybackTest {
             assertTrue("Recorded programme must render",frame.await(30,TimeUnit.SECONDS));
             scenario.onActivity(a->{assertTrue("Recording must permit seeking",a.player.isCurrentMediaItemSeekable());a.player.pause();a.player.seekTo(0);a.seekBy(10000);assertEquals(10000,a.player.getCurrentPosition());a.seekBy(-10000);assertEquals(0,a.player.getCurrentPosition());a.guide();});
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-            android.view.accessibility.AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
-            assertNotNull(root);assertFalse("EPG programme must be visible",root.findAccessibilityNodeInfosByText("EPG Recording").isEmpty());shot("epg");
+            boolean programmeVisible=false;
+            for(int attempt=0;attempt<40&&!programmeVisible;attempt++){
+                android.view.accessibility.AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+                programmeVisible=root!=null&&!root.findAccessibilityNodeInfosByText("EPG Recording").isEmpty();
+                if(!programmeVisible)Thread.sleep(125);
+            }
+            assertTrue("EPG programme must be visible",programmeVisible);shot("epg");
         }
     }
     private int loadedImages(MainActivity a){int loaded=0;for(int i=0;i<a.rows.getChildCount();i++)if(a.rows.getChildAt(i) instanceof android.widget.LinearLayout){android.widget.LinearLayout row=(android.widget.LinearLayout)a.rows.getChildAt(i);if(row.getChildCount()>0&&row.getChildAt(0) instanceof ImageView&&((ImageView)row.getChildAt(0)).getDrawable()!=null)loaded++;}return loaded;}
