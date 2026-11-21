@@ -25,7 +25,12 @@ public class PlaybackTest {
     private byte[] transport;
     private volatile boolean cookieSeen;
     private final CountDownLatch imagesSeen=new CountDownLatch(2);
-    private final byte[] pixel=Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p4sAAAAASUVORK5CYII=",Base64.DEFAULT);
+    private final byte[] pixel=fixturePng();
+    private static byte[] fixturePng(){
+        Bitmap bitmap=Bitmap.createBitmap(new int[]{0xff4caf50},1,1,Bitmap.Config.ARGB_8888);
+        ByteArrayOutputStream out=new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.PNG,100,out);bitmap.recycle();return out.toByteArray();
+    }
     @Before public void setup()throws Exception {
         try(InputStream in=InstrumentationRegistry.getInstrumentation().getContext().getAssets().open("sample.ts");ByteArrayOutputStream out=new ByteArrayOutputStream()) {byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);transport=out.toByteArray();}
         server=new MockWebServer();
