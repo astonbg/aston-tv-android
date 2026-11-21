@@ -38,12 +38,12 @@ public class PlaybackTest {
                 if(p.equals("/media/camera"))return new MockResponse().addHeader("Content-Type","application/vnd.apple.mpegurl").setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:30.0,\nsegment\n#EXT-X-ENDLIST\n");
                 return new MockResponse().addHeader("Content-Type","video/mp2t").setBody(new Buffer().write(transport));
             }return new MockResponse().setResponseCode(404);
-        }});server.start();
+        }});server.start(java.net.InetAddress.getByName("127.0.0.1"),0);
     }
     private MockResponse json(String value){return new MockResponse().addHeader("Content-Type","application/json").setBody(value);}
     @After public void cleanup()throws Exception {server.shutdown();}
     @Test public void actualFramesRotateAndCameraHls()throws Exception {
-        Intent intent=new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).putExtra("test_server",server.url("/").toString());
+        Intent intent=new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).putExtra("test_server","http://127.0.0.1:"+server.getPort()+"/");
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(intent)){
             scenario.onActivity(a->a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
             Thread.sleep(1500);
