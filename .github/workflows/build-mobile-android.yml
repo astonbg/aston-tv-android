@@ -55,7 +55,10 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            gradle :app:connectedDebugAndroidTest --no-daemon
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w eu.astonserver.astontv.android.mobile.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
+            grep -F 'OK (1 test)' instrumentation.txt
             adb pull /sdcard/Android/data/eu.astonserver.astontv.android.mobile/files/screenshots android-screenshots
             adb install -r app/build/outputs/apk/release/app-release.apk
             adb shell am start -W -n eu.astonserver.astontv.android.mobile/eu.astonserver.astontv.android.MainActivity
@@ -68,6 +71,7 @@ jobs:
             SHA256SUMS.txt
             signing.txt
             package.txt
+            instrumentation.txt
             android-screenshots
             app/build/reports/androidTests
             app/build/outputs/androidTest-results
