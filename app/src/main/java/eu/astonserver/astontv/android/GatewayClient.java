@@ -29,7 +29,7 @@ final class GatewayClient {
             for(Map.Entry<String,List<String>> h:c.getHeaderFields().entrySet())if("Set-Cookie".equalsIgnoreCase(h.getKey()))for(String v:h.getValue())CookieManager.getInstance().setCookie(base,v);
             CookieManager.getInstance().flush();
             if(status==401)throw new Failure(status,"Нужно е сдвояване с нов 8-цифрен код.");
-            if(status<200||status>=300)throw new Failure(status,"Сървърът върна грешка "+status);
+            if(status<200||status>=300)throw new Failure(status,path.contains("/vod/")&&(status==404||status==409)?"Няма еднозначно съответствие за това предаване в Plex.":"Сървърът върна грешка "+status);
             ByteArrayOutputStream bytes=new ByteArrayOutputStream();
             try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(bytes.size()+n>4*1024*1024)throw new IOException("Прекалено голям отговор");bytes.write(b,0,n);}}
             return new JSONObject(bytes.toString("UTF-8"));

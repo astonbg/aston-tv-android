@@ -25,12 +25,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Verify pairing survives restarts and outages
+        run: python3 -m unittest discover -s backend/mobile-gateway -p 'test_*.py' -v
       - name: Generate real test transport stream
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
           mkdir -p app/src/androidTest/assets
           ffmpeg -f lavfi -i testsrc2=size=320x180:rate=15 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 30 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 30 -c:a aac -f mpegts app/src/androidTest/assets/sample.ts
+          ffmpeg -i app/src/androidTest/assets/sample.ts -c copy -movflags +faststart app/src/androidTest/assets/sample.mp4
       - name: Compile APK and instrumentation tests
         run: gradle :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest --no-daemon
       - name: Verify signed APK
@@ -39,9 +42,10 @@ jobs:
           "$SDK_TOOLS/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk | tee signing.txt
           "$SDK_TOOLS/aapt" dump badging app/build/outputs/apk/release/app-release.apk | tee package.txt
           grep -F "eu.astonserver.astontv.android.mobile" package.txt
-          grep -F "versionName='5.3.1'" package.txt
-          cp app/build/outputs/apk/release/app-release.apk AstonTV-Mobile-5.3.1-Android.apk
-          sha256sum AstonTV-Mobile-5.3.1-Android.apk > SHA256SUMS.txt
+          grep -F "versionName='5.4.0'" package.txt
+          cp app/build/outputs/apk/release/app-release.apk AstonTV-Mobile-5.4.0-Android.apk
+          sha256sum AstonTV-Mobile-5.4.0-Android.apk > SHA256SUMS.txt
+          cp "$SDK_TOOLS/lib/apksigner.jar" apksigner.jar
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -58,7 +62,7 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w eu.astonserver.astontv.android.mobile.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
-            grep -F 'OK (1 test)' instrumentation.txt
+            grep -E 'OK \([0-9]+ tests?\)' instrumentation.txt
             adb exec-out run-as eu.astonserver.astontv.android.mobile tar -C files/screenshots -cf - . > android-screenshots.tar
             mkdir -p android-screenshots
             tar -xf android-screenshots.tar -C android-screenshots
@@ -67,10 +71,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: AstonTV-Mobile-5.3.1-Android
+          name: AstonTV-Mobile-5.4.0-Android
           path: |
-            AstonTV-Mobile-5.3.1-Android.apk
+            AstonTV-Mobile-5.4.0-Android.apk
             SHA256SUMS.txt
+            apksigner.jar
             signing.txt
             package.txt
             instrumentation.txt

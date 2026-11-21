@@ -22,9 +22,9 @@ import static org.junit.Assert.*;
 @UnstableApi @RunWith(AndroidJUnit4.class)
 public class PlaybackTest {
     private MockWebServer server;
-    private byte[] transport;
+    private byte[] transport,recording;
     private volatile boolean cookieSeen;
-    private final CountDownLatch imagesSeen=new CountDownLatch(2);
+    private final CountDownLatch logoSeen=new CountDownLatch(1),snapshotSeen=new CountDownLatch(1);
     private final byte[] pixel=fixturePng();
     private static byte[] fixturePng(){
         Bitmap bitmap=Bitmap.createBitmap(new int[]{0xff4caf50},1,1,Bitmap.Config.ARGB_8888);
@@ -33,18 +33,21 @@ public class PlaybackTest {
     }
     @Before public void setup()throws Exception {
         try(InputStream in=InstrumentationRegistry.getInstrumentation().getContext().getAssets().open("sample.ts");ByteArrayOutputStream out=new ByteArrayOutputStream()) {byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);transport=out.toByteArray();}
+        try(InputStream in=InstrumentationRegistry.getInstrumentation().getContext().getAssets().open("sample.mp4");ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);recording=out.toByteArray();}
         server=new MockWebServer();
         server.setDispatcher(new Dispatcher(){@Override public MockResponse dispatch(RecordedRequest r){
             String p=r.getPath();
             if(p.equals("/api/public/me"))return json("{}").addHeader("Set-Cookie","aston_public_sid=fixture; Path=/; HttpOnly");
             if(p.equals("/api/public/channels"))return json("{\"channels\":[{\"id\":\"one\",\"name\":\"Тест телевизия\",\"logo_url\":\"/api/public/logo/0123456789abcdef01234567\"}]}");
             if(p.equals("/api/public/cameras"))return json("{\"cameras\":[{\"id\":\"cam1\",\"name\":\"Тест камера\",\"enabled\":1}]}");
-            if(p.equals("/api/public/logo/0123456789abcdef01234567")||p.equals("/api/public/thumb/cam1")){if(!String.valueOf(r.getHeader("Cookie")).contains("aston_public_sid=fixture"))return new MockResponse().setResponseCode(401);imagesSeen.countDown();return new MockResponse().addHeader("Content-Type","image/png").setBody(new Buffer().write(pixel));}
+            if(p.equals("/api/public/logo/0123456789abcdef01234567")||p.equals("/api/public/thumb/cam1")){if(!String.valueOf(r.getHeader("Cookie")).contains("aston_public_sid=fixture"))return new MockResponse().setResponseCode(401);if(p.contains("/thumb/"))snapshotSeen.countDown();else logoSeen.countDown();return new MockResponse().addHeader("Content-Type","image/png").setBody(new Buffer().write(pixel));}
             if(p.equals("/api/public/play"))return json("{\"url\":\"/media/tv\",\"format\":\"mpegts\"}");
             if(p.equals("/api/public/camera-play"))return json("{\"url\":\"/media/camera\",\"format\":\"hls\"}");
+            if(p.equals("/api/public/vod/resolve"))return json("{\"url\":\"/media/vod\",\"title\":\"EPG Recording\",\"seek_to\":0}");
             if(p.startsWith("/media/")){
                 if(!String.valueOf(r.getHeader("Cookie")).contains("aston_public_sid=fixture"))return new MockResponse().setResponseCode(401);
                 cookieSeen=true;
+                if(p.equals("/media/vod"))return new MockResponse().addHeader("Content-Type","video/mp4").setBody(new Buffer().write(recording));
                 if(p.equals("/media/camera"))return new MockResponse().addHeader("Content-Type","application/vnd.apple.mpegurl").setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:30.0,\nsegment\n#EXT-X-ENDLIST\n");
                 return new MockResponse().addHeader("Content-Type","video/mp2t").setBody(new Buffer().write(transport));
             }return new MockResponse().setResponseCode(404);
@@ -56,9 +59,9 @@ public class PlaybackTest {
         Intent intent=new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).putExtra("test_server","http://127.0.0.1:"+server.getPort()+"/");
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(intent)){
             scenario.onActivity(a->assertEquals("Activity must follow device rotation",ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR,a.getRequestedOrientation()));
-            assertTrue("Gateway channel logo must load",imagesSeen.await(1,TimeUnit.SECONDS));
+            assertTrue("Gateway channel logo must load",logoSeen.await(10,TimeUnit.SECONDS));
             scenario.onActivity(a->a.tab(true));
-            assertTrue("Gateway camera snapshot must load",imagesSeen.await(10,TimeUnit.SECONDS));
+            assertTrue("Gateway camera snapshot must load",snapshotSeen.await(10,TimeUnit.SECONDS));
             Thread.sleep(300);
             scenario.onActivity(a->{int loaded=loadedImages(a);assertEquals("Camera snapshot must decode",1,loaded);});
             scenario.onActivity(a->a.tab(false));
@@ -76,6 +79,21 @@ public class PlaybackTest {
             assertTrue("Camera HLS must render an actual frame",cameraFrame.await(30,TimeUnit.SECONDS));shot("camera-hls");
             scenario.onActivity(a->a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));Thread.sleep(1500);
             scenario.onActivity(a->{assertFalse(a.isFull());assertTrue(a.player.isPlaying());});shot("portrait-return");
+        }
+    }
+    @Test public void programmeRecordingCanSeekBothDirections()throws Exception {
+        Intent intent=new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).putExtra("test_server","http://127.0.0.1:"+server.getPort()+"/");
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(intent)){
+            assertTrue(logoSeen.await(10,TimeUnit.SECONDS));
+            JSONObject programme=new JSONObject().put("start",1700000000).put("end",1700003600).put("title","EPG Recording");
+            JSONObject channel=new JSONObject().put("id","one").put("name","Test TV").put("programmes",new org.json.JSONArray().put(programme));
+            CountDownLatch frame=new CountDownLatch(1);
+            scenario.onActivity(a->{a.player.addListener(new Player.Listener(){@Override public void onRenderedFirstFrame(){frame.countDown();}});a.playProgramme(channel,programme);});
+            assertTrue("Recorded programme must render",frame.await(30,TimeUnit.SECONDS));
+            scenario.onActivity(a->{assertTrue("Recording must permit seeking",a.player.isCurrentMediaItemSeekable());a.player.pause();a.player.seekTo(0);a.seekBy(10000);assertEquals(10000,a.player.getCurrentPosition());a.seekBy(-10000);assertEquals(0,a.player.getCurrentPosition());a.guide();});
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            android.view.accessibility.AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+            assertNotNull(root);assertFalse("EPG programme must be visible",root.findAccessibilityNodeInfosByText("EPG Recording").isEmpty());shot("epg");
         }
     }
     private int loadedImages(MainActivity a){int loaded=0;for(int i=0;i<a.rows.getChildCount();i++)if(a.rows.getChildAt(i) instanceof android.widget.LinearLayout){android.widget.LinearLayout row=(android.widget.LinearLayout)a.rows.getChildAt(i);if(row.getChildCount()>0&&row.getChildAt(0) instanceof ImageView&&((ImageView)row.getChildAt(0)).getDrawable()!=null)loaded++;}return loaded;}

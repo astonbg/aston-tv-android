@@ -42,7 +42,7 @@ public final class MainActivity extends Activity {
     private String filter="Всички";
     private volatile int generation;
     private long lastBack;
-    private Runnable refreshTicket;
+    private Runnable refreshTicket,recovery; private int retryAttempts; private boolean vod; private AlertDialog pairingDialog;
     private Set<String> favorites;
     private List<String> recent;
     private final Map<String,Bitmap> imageCache=Collections.synchronizedMap(new LinkedHashMap<String,Bitmap>(80,0.75f,true){
@@ -56,13 +56,14 @@ public final class MainActivity extends Activity {
         String server=prefs.getString("server",GatewayClient.LOCAL);if(!server.equals(GatewayClient.REMOTE))server=GatewayClient.LOCAL;
         if(BuildConfig.DEBUG){String test=getIntent().getStringExtra("test_server");if(test!=null&&test.matches("http://127\\.0\\.0\\.1:[0-9]+/"))server=test;}
         api=new GatewayClient(server);CookieManager.getInstance().setAcceptCookie(true);
-        player=new ExoPlayer.Builder(this).build();
+        player=new ExoPlayer.Builder(this).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build();
         player.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);
         player.setHandleAudioBecomingNoisy(true);buildUI();
         player.addListener(new Player.Listener(){
             @Override public void onPlaybackStateChanged(int state){if(selected==null)return;if(state==Player.STATE_BUFFERING)status.setText("Буфериране…");else if(state==Player.STATE_READY)status.setText(player.getPlayWhenReady()?"Възпроизвеждане":"Пауза");else if(state==Player.STATE_ENDED)status.setText("Потокът завърши · избери Повтори");}
-            @Override public void onIsPlayingChanged(boolean playing){video.setKeepScreenOn(playing);if(playing)status.setText("НА ЖИВО");else if(player.getPlaybackState()==Player.STATE_READY)status.setText("Пауза");}
-            @Override public void onPlayerError(PlaybackException error){status.setText("Видеото не тръгна · "+error.getErrorCodeName());manualFull=false;suppressLandscape=true;layout();playerView.showController();}
+            @Override public void onIsPlayingChanged(boolean playing){video.setKeepScreenOn(playing);if(playing)status.setText(vod?"Запис · използвай −10/+10 сек":"НА ЖИВО");else if(player.getPlaybackState()==Player.STATE_READY)status.setText("Пауза");}
+            @Override public void onPlayerError(PlaybackException error){status.setText("Връзката с видеото прекъсна");scheduleRecovery();playerView.showController();}
+                    @Override public void onRenderedFirstFrame(){retryAttempts=0;}
         });connect();
     }
     private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
@@ -76,20 +77,23 @@ public final class MainActivity extends Activity {
         video=new FrameLayout(this);video.setContentDescription("Видео зона");video.setBackgroundColor(Color.BLACK);
         playerView=new PlayerView(this);playerView.setPlayer(player);playerView.setControllerShowTimeoutMs(4000);playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);video.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
+        playerView.setShowRewindButton(true);playerView.setShowFastForwardButton(true);
         LinearLayout overlay=new LinearLayout(this);overlay.setGravity(Gravity.END);
         overlay.addView(button("◀",()->step(-1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
         overlay.addView(button("▶",()->step(1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
         fit=button(fill?"Цял кадър":"Запълни",()->{fill=!fill;prefs.edit().putBoolean("fill",fill).apply();updateFit();});
-        Button full=button("⛶",this::toggleFull);full.setContentDescription("Цял екран / Списък");overlay.addView(fit);overlay.addView(full,new LinearLayout.LayoutParams(dp(64),dp(48)));
+        Button full=button("⛶",this::toggleFull);full.setContentDescription("Цял екран / Списък");overlay.addView(button("EPG",this::guide));overlay.addView(fit);overlay.addView(full,new LinearLayout.LayoutParams(dp(64),dp(48)));
         video.addView(overlay,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT));
         playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener)visibility->overlay.setVisibility(visibility));shell.addView(video,new LinearLayout.LayoutParams(-1,dp(280)));
         details=vertical();title=label("Избери канал или камера",18);status=label("Свързване…",12);status.setTextColor(teal);details.addView(title);details.addView(status);
-        LinearLayout controls=new LinearLayout(this);add(controls,button("◀",()->step(-1)));add(controls,button("Списък",()->{manualFull=false;suppressLandscape=true;layout();}));add(controls,button("Повтори",()->{if(selected!=null)play(selected,selectedCamera);}));add(controls,button("▶",()->step(1)));add(controls,button("Стоп",this::stop));details.addView(controls);shell.addView(details);
+        LinearLayout controls=new LinearLayout(this);add(controls,button("◀",()->step(-1)));add(controls,button("Списък",()->{manualFull=false;suppressLandscape=true;layout();}));add(controls,button("Повтори",()->{retryAttempts=0;if(selected!=null)play(selected,selectedCamera);}));add(controls,button("▶",()->step(1)));add(controls,button("Стоп",this::stop));details.addView(controls);shell.addView(details);
         catalog=vertical();search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("Търси канал или камера");catalog.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){renderRows();}public void afterTextChanged(Editable e){}});
         LinearLayout filters=new LinearLayout(this);for(String f:new String[]{"Всички","Любими","Последни"})add(filters,button(f,()->{filter=f;renderRows();}));catalog.addView(filters);
         ScrollView scroll=new ScrollView(this);rows=vertical();scroll.addView(rows);catalog.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));shell.addView(catalog,new LinearLayout.LayoutParams(-1,0,1));
         bottom=new LinearLayout(this);add(bottom,button("Телевизия",()->tab(false)));add(bottom,button("Камери",()->tab(true)));add(bottom,button("Настройки",this::settings));shell.addView(bottom);
+        LinearLayout guideControls=new LinearLayout(this);
+        add(guideControls,button("Програма",this::guide));add(guideControls,button("−10 сек",()->seekBy(-10000)));add(guideControls,button("+10 сек",()->seekBy(10000)));add(guideControls,button("На живо",()->{if(selected!=null)play(selected,selectedCamera);}));details.addView(guideControls);
         updateFit();shell.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(r-l!=or-ol||b-t!=ob-ot)layout();});shell.post(this::layout);
     }
     private void updateFit(){playerView.setResizeMode(fill?AspectRatioFrameLayout.RESIZE_MODE_ZOOM:AspectRatioFrameLayout.RESIZE_MODE_FIT);fit.setText(fill?"Цял кадър":"Запълни");}
@@ -97,8 +101,8 @@ public final class MainActivity extends Activity {
     boolean isFull(){return selected!=null&&(manualFull||(landscape()&&!suppressLandscape));}
     private void layout(){
         if(shell==null)return;boolean full=isFull();int height=shell.getHeight();if(height<=0)return;boolean compact=landscape()&&!full;
-        header.setVisibility(full||compact?View.GONE:View.VISIBLE);details.setVisibility(full?View.GONE:View.VISIBLE);title.setVisibility(compact?View.GONE:View.VISIBLE);catalog.setVisibility(full?View.GONE:View.VISIBLE);bottom.setVisibility(full?View.GONE:View.VISIBLE);
-        int size=full?height:Math.max(dp(compact?90:200),(int)(height*(compact?0.25:0.44)));if(video.getLayoutParams().height!=size){video.getLayoutParams().height=size;video.requestLayout();}
+        header.setVisibility(full||compact?View.GONE:View.VISIBLE);details.setVisibility(full||compact?View.GONE:View.VISIBLE);title.setVisibility(compact?View.GONE:View.VISIBLE);catalog.setVisibility(full?View.GONE:View.VISIBLE);bottom.setVisibility(full?View.GONE:View.VISIBLE);
+        int size=full?height:Math.max(dp(compact?90:200),(int)(height*(compact?0.25:0.36)));if(video.getLayoutParams().height!=size){video.getLayoutParams().height=size;video.requestLayout();}
         getWindow().getDecorView().setSystemUiVisibility(full?View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY:View.SYSTEM_UI_FLAG_VISIBLE);
     }
     private void toggleFull(){if(isFull()){manualFull=false;suppressLandscape=true;}else{manualFull=true;suppressLandscape=false;}layout();playerView.showController();}
@@ -114,21 +118,54 @@ public final class MainActivity extends Activity {
             ImageView picture=new ImageView(this);picture.setBackgroundColor(panel);picture.setScaleType(ImageView.ScaleType.CENTER_CROP);picture.setContentDescription(cam?"Снимка от камера "+name:"Лого на канал "+name);
             row.addView(picture,new LinearLayout.LayoutParams(dp(76),dp(64)));
             String imagePath=cam?"/api/public/thumb/"+id:item.optString("logo_url","");
-            if(!imagePath.isEmpty())loadImage(picture,imagePath);
+            TextView captured=cam?label("Чака\nкадър",10):null;if(!imagePath.isEmpty())loadImage(picture,imagePath,captured);
             Button open=button(name+(now.isEmpty()?"":"\n"+now),()->play(item,cam));open.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);open.setEnabled(!cam||GatewayClient.enabled(item.opt("enabled")));row.addView(open,new LinearLayout.LayoutParams(0,dp(64),1));
             if(!cam)open.setOnLongClickListener(v->{JSONObject next=item.optJSONObject("next");new AlertDialog.Builder(this).setTitle(name).setMessage("СЕГА\n"+(now.isEmpty()?"Няма данни":now)+"\n\nСЛЕДВА\n"+(next==null?"Няма данни":next.optString("title","Няма данни"))).setPositiveButton("Затвори",null).show();return true;});
-            row.addView(button(cam?"✎":favorites.contains(id)?"★":"☆",()->{if(cam)rename(item);else{if(!favorites.add(id))favorites.remove(id);prefs.edit().putStringSet("favorites",new HashSet<>(favorites)).apply();renderRows();}}),new LinearLayout.LayoutParams(dp(56),dp(64)));rows.addView(row);
+            row.addView(button(cam?"✎":favorites.contains(id)?"★":"☆",()->{if(cam)rename(item);else{if(!favorites.add(id))favorites.remove(id);prefs.edit().putStringSet("favorites",new HashSet<>(favorites)).apply();renderRows();}}),new LinearLayout.LayoutParams(dp(56),dp(64)));if(captured!=null)row.addView(captured,new LinearLayout.LayoutParams(dp(66),dp(64)));rows.addView(row);
         }if(rows.getChildCount()==0)rows.addView(label(paired?"Няма елементи за този филтър":"Няма зареден списък · отвори Настройки",15));
     }
-    private void loadImage(ImageView target,String path){
-        target.setTag(path);Bitmap cached=imageCache.get(path);if(cached!=null){target.setImageBitmap(cached);return;}target.setImageDrawable(null);
+    private void loadImage(ImageView target,String path,TextView captured){
+        target.setTag(path);Bitmap cached=imageCache.get(path);if(cached!=null&&!path.contains("/thumb/")){target.setImageBitmap(cached);return;}target.setImageDrawable(null);
         GatewayClient client=api;
         imageIo.execute(()->{
-            try{Bitmap bitmap=client.image(path);imageCache.put(path,bitmap);main.post(()->{if(!destroyed&&api==client&&path.equals(target.getTag()))target.setImageBitmap(bitmap);});}
-            catch(Exception ignored){}
+            try{Bitmap bitmap=client.image(path);if(!path.contains("/thumb/"))imageCache.put(path,bitmap);main.post(()->{if(!destroyed&&api==client&&path.equals(target.getTag())){target.setImageBitmap(bitmap);if(captured!=null)captured.setText("Получен\n"+new java.text.SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date()));}});}
+            catch(Exception ignored){main.post(()->{if(!destroyed&&api==client&&captured!=null)captured.setText("Няма\nкадър");});}
         });
     }
     private void rename(JSONObject item){EditText input=new EditText(this);input.setSingleLine(true);input.setText(name(item,true));new AlertDialog.Builder(this).setTitle("Име на камерата").setView(input).setPositiveButton("Запази",(d,w)->{String s=input.getText().toString().trim();prefs.edit().putString("camera."+item.optString("id"),s.isEmpty()?item.optString("name"):s.substring(0,Math.min(60,s.length()))).apply();renderRows();if(selectedCamera&&selected!=null)title.setText(name(selected,true));}).setNegativeButton("Отказ",null).show();}
+    private void scheduleRecovery(){
+        if(destroyed||!foreground||selected==null||vod)return;
+        if(recovery!=null)main.removeCallbacks(recovery);
+        if(retryAttempts>=4){status.setText("Връзката не се възстанови. Провери мрежата и избери Повтори.");return;}
+        int delay=2000*(1<<retryAttempts++),seq=generation;
+        status.setText("Свързване отново след "+delay/1000+" сек · опит "+retryAttempts+"/4");
+        recovery=()->{if(!destroyed&&foreground&&generation==seq&&selected!=null)play(selected,selectedCamera);};main.postDelayed(recovery,delay);
+    }
+    void seekBy(long delta){
+        if(!player.isCurrentMediaItemSeekable()){Toast.makeText(this,"Този жив поток няма буфер за превъртане. Отвори Програма за налично предаване в Plex.",Toast.LENGTH_LONG).show();return;}
+        long position=Math.max(0,player.getCurrentPosition()+delta),duration=player.getDuration();
+        if(duration!=C.TIME_UNSET)position=Math.min(position,duration);
+        player.seekTo(position);playerView.showController();
+    }
+    void guide(){
+        if(selected==null||selectedCamera){Toast.makeText(this,"Първо избери телевизионен канал",Toast.LENGTH_SHORT).show();return;}
+        JSONObject channel=selected;JSONArray programmes=channel.optJSONArray("programmes");
+        if(programmes==null||programmes.length()==0){new AlertDialog.Builder(this).setTitle("Програма · "+name(channel,false)).setMessage("Сървърът не предоставя EPG за този канал.").setPositiveButton("Затвори",null).show();return;}
+        String[] titles=new String[programmes.length()];java.text.SimpleDateFormat format=new java.text.SimpleDateFormat("dd.MM HH:mm",Locale.getDefault());
+        for(int i=0;i<titles.length;i++){JSONObject p=programmes.optJSONObject(i);titles[i]=p==null?"Няма данни":format.format(new Date(p.optLong("start")*1000))+"  "+p.optString("title","Без заглавие");}
+        new AlertDialog.Builder(this).setTitle("Програма · "+name(channel,false)).setItems(titles,(dialog,index)->{JSONObject programme=programmes.optJSONObject(index);if(programme==null)return;
+            new AlertDialog.Builder(this).setTitle(programme.optString("title")).setMessage("Гледането отначало е налично само при съответстващ файл в Plex.\n\n"+programme.optString("description",programme.optString("desc",""))).setPositiveButton("Пусни отначало",(d,w)->playProgramme(channel,programme)).setNegativeButton("Затвори",null).show();
+        }).setNegativeButton("Затвори",null).show();
+    }
+    void playProgramme(JSONObject channel,JSONObject programme){
+        vod=true;if(recovery!=null)main.removeCallbacks(recovery);int seq=++generation;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);player.stop();status.setText("Търсене на предаването в Plex…");
+        request(c->c.request("api/public/vod/resolve",new JSONObject().put("channel_id",channel.getString("id")).put("mode","programme").put("start",programme.getLong("start"))),r->{
+            try{String url=api.mediaUrl(r.getString("url"));DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory();String cookies=CookieManager.getInstance().getCookie(api.base);if(cookies!=null)http.setDefaultRequestProperties(Collections.singletonMap("Cookie",cookies));
+                selected=channel;selectedCamera=false;layout();title.setText(r.optString("title",programme.optString("title")));
+                player.setMediaSource(new DefaultMediaSourceFactory(http).createMediaSource(MediaItem.fromUri(url)));player.prepare();player.seekTo(Math.max(0,r.optLong("seek_to"))*1000);player.setPlayWhenReady(foreground);playerView.showController();
+            }catch(Exception e){status.setText("Предаването не може да бъде отворено");}
+        },seq);
+    }
     private interface Work {JSONObject run(GatewayClient client)throws Exception;}
     private interface Result {void accept(JSONObject value);}
     private void request(Work work,Result result){request(work,result,-1);}
@@ -140,7 +177,7 @@ public final class MainActivity extends Activity {
             catch(Exception e){main.post(()->{
                 if(destroyed||api!=client||(expected>=0&&expected!=generation))return;
                 status.setText(e instanceof GatewayClient.Failure?e.getMessage():"Няма връзка със сървъра. Провери Wi-Fi/VPN или външния адрес.");
-                if(expected>=0){manualFull=false;suppressLandscape=true;layout();}
+                if(expected>=0&&(!(e instanceof GatewayClient.Failure)||((GatewayClient.Failure)e).status>=500))scheduleRecovery();
                 if(e instanceof GatewayClient.Failure&&((GatewayClient.Failure)e).status==401){paired=false;pairDialog();}
             });}
         });
@@ -151,7 +188,7 @@ public final class MainActivity extends Activity {
         request(c->c.request("api/public/cameras",null),r->{cameras=r.optJSONArray("cameras");if(cameras==null)cameras=new JSONArray();renderRows();});
     }
     void play(JSONObject item,boolean camera){
-        if(camera&&!GatewayClient.enabled(item.opt("enabled")))return;selected=item;selectedCamera=camera;cameraTab=camera;int seq=++generation;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);
+        if(camera&&!GatewayClient.enabled(item.opt("enabled")))return;vod=false;if(recovery!=null)main.removeCallbacks(recovery);selected=item;selectedCamera=camera;cameraTab=camera;int seq=++generation;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);
         player.stop();player.clearMediaItems();title.setText(name(item,camera));status.setText("Зареждане…");suppressLandscape=false;layout();playerView.showController();
         if(!camera){String id=item.optString("id");recent.remove(id);recent.add(0,id);if(recent.size()>20)recent.remove(recent.size()-1);prefs.edit().putString("recent",new JSONArray(recent).toString()).putString("last",id).apply();}
         request(c->{JSONObject body=new JSONObject();body.put(camera?"camera":"channel_id",item.getString("id"));body.put("format",camera?"hls":"auto");return c.request(camera?"api/public/camera-play":"api/public/play",body);},r->{
@@ -164,17 +201,18 @@ public final class MainActivity extends Activity {
         },seq);renderRows();
     }
     private void step(int delta){JSONArray source=selectedCamera?cameras:channels;List<JSONObject> list=new ArrayList<>();for(int i=0;i<source.length();i++){JSONObject c=source.optJSONObject(i);if(c!=null&&(!selectedCamera||GatewayClient.enabled(c.opt("enabled"))))list.add(c);}if(list.isEmpty())return;int index=-1;for(int i=0;i<list.size();i++)if(selected!=null&&list.get(i).optString("id").equals(selected.optString("id")))index=i;play(list.get((index+delta+list.size())%list.size()),selectedCamera);}
-    private void stop(){generation++;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);player.stop();player.clearMediaItems();selected=null;manualFull=false;suppressLandscape=false;title.setText("Избери канал или камера");status.setText("Спряно");layout();}
+    private void stop(){generation++;retryAttempts=0;if(recovery!=null)main.removeCallbacks(recovery);if(refreshTicket!=null)main.removeCallbacks(refreshTicket);player.stop();player.clearMediaItems();selected=null;manualFull=false;suppressLandscape=false;title.setText("Избери канал или камера");status.setText("Спряно");layout();}
     private void pairDialog(){
-        if(isFinishing()||destroyed)return;EditText code=new EditText(this);code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});code.setHint("8-цифрен код от Aston Studio");
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Сдвояване").setView(code).setPositiveButton("Свържи",null).setNegativeButton("Отказ",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=code.getText().toString();if(!value.matches("[0-9]{8}")){code.setError("Нужни са 8 цифри");return;}dialog.dismiss();request(c->c.request("api/public/pair",new JSONObject().put("code",value)),r->connect());});
+        if(isFinishing()||destroyed||(pairingDialog!=null&&pairingDialog.isShowing()))return;EditText code=new EditText(this);code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});code.setHint("8-цифрен код от Aston Studio");
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Сдвояване").setView(code).setPositiveButton("Свържи",null).setNegativeButton("Отказ",null).create();pairingDialog=dialog;dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=code.getText().toString();if(!value.matches("[0-9]{8}")){code.setError("Нужни са 8 цифри");return;}dialog.dismiss();request(c->c.request("api/public/pair",new JSONObject().put("code",value)),r->connect());});
     }
     private void settings(){String[] options={"Домашен сървър (Wi-Fi/VPN)","Външен сървър (интернет)","Сдвояване с код","Обнови списъците",prefs.getBoolean("resume",false)?"Изключи последния канал при отваряне":"Продължи последния канал при отваряне","Диагностика"};
-        new AlertDialog.Builder(this).setTitle("Настройки · 5.3.1").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
+        new AlertDialog.Builder(this).setTitle("Настройки · 5.4.0").setItems(options,(d,n)->{if(n<2){stop();api=new GatewayClient(n==0?GatewayClient.LOCAL:GatewayClient.REMOTE);prefs.edit().putString("server",api.base).apply();paired=false;imageCache.clear();channels=new JSONArray();cameras=new JSONArray();renderRows();connect();}else if(n==2)pairDialog();else if(n==3)connect();else if(n==4)prefs.edit().putBoolean("resume",!prefs.getBoolean("resume",false)).apply();else request(c->c.request("healthz",null),r->new AlertDialog.Builder(this).setTitle("Връзка").setMessage("Gateway: "+r.optString("version","?")+"\n"+api.base+"\nСдвоено: "+paired+"\nКанали: "+channels.length()+" · Камери: "+cameras.length()+"\nДомашният адрес изисква домашен Wi-Fi или VPN.").setPositiveButton("OK",null).show());}).setNegativeButton("Затвори",null).show();
     }
     @Override public void onBackPressed(){if(isFull()){manualFull=false;suppressLandscape=true;layout();return;}long now=System.currentTimeMillis();if(now-lastBack<1800)super.onBackPressed();else{lastBack=now;Toast.makeText(this,"Назад отново за изход",Toast.LENGTH_SHORT).show();}}
     @Override public boolean dispatchKeyEvent(KeyEvent e){if(e.getAction()==KeyEvent.ACTION_DOWN){switch(e.getKeyCode()){case KeyEvent.KEYCODE_MEDIA_NEXT:step(1);return true;case KeyEvent.KEYCODE_MEDIA_PREVIOUS:step(-1);return true;case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:if(player.isPlaying())player.pause();else player.play();return true;}}return super.dispatchKeyEvent(e);}
-    @Override protected void onResume(){super.onResume();foreground=true;}
-    @Override protected void onPause(){foreground=false;player.pause();super.onPause();}
+    private final Runnable refreshCatalog=new Runnable(){public void run(){if(destroyed)return;if(foreground){if(cameraTab&&!isFull())renderRows();else if(!cameraTab)reload();}main.postDelayed(this,60000);}};
+    @Override protected void onResume(){super.onResume();foreground=true;main.removeCallbacks(refreshCatalog);main.postDelayed(refreshCatalog,60000);}
+    @Override protected void onPause(){foreground=false;main.removeCallbacks(refreshCatalog);if(recovery!=null)main.removeCallbacks(recovery);player.pause();super.onPause();}
     @Override protected void onDestroy(){destroyed=true;generation++;main.removeCallbacksAndMessages(null);io.shutdownNow();imageIo.shutdownNow();imageCache.clear();playerView.setPlayer(null);player.release();super.onDestroy();}
 }
