@@ -31,7 +31,8 @@ public final class MainActivity extends Activity {
     ExoPlayer player;
     PlayerView playerView;
     FrameLayout video;
-    private LinearLayout shell,header,bottom,details,catalog,rows;
+    private LinearLayout shell,header,bottom,details,catalog;
+    LinearLayout rows;
     private TextView status,title;
     private Button fit;
     private EditText search;
@@ -102,7 +103,7 @@ public final class MainActivity extends Activity {
     }
     private void toggleFull(){if(isFull()){manualFull=false;suppressLandscape=true;}else{manualFull=true;suppressLandscape=false;}layout();playerView.showController();}
     @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);manualFull=false;suppressLandscape=false;shell.post(this::layout);}
-    private void tab(boolean camera){cameraTab=camera;filter="Всички";manualFull=false;suppressLandscape=true;search.setText("");renderRows();layout();}
+    void tab(boolean camera){cameraTab=camera;filter="Всички";manualFull=false;suppressLandscape=true;search.setText("");renderRows();layout();}
     private String name(JSONObject item,boolean cam){return cam?prefs.getString("camera."+item.optString("id"),item.optString("name","Камера")):item.optString("name","Канал");}
     private void renderRows(){
         if(rows==null)return;rows.removeAllViews();JSONArray data=cameraTab?cameras:channels;List<JSONObject> list=new ArrayList<>();for(int i=0;i<data.length();i++)if(data.optJSONObject(i)!=null)list.add(data.optJSONObject(i));
