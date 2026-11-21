@@ -36,7 +36,7 @@ public final class MainActivity extends Activity {
     private JSONObject selected;
     private boolean cameraTab,selectedCamera,manualFull,suppressLandscape,fill,paired,foreground,destroyed;
     private String filter="Всички";
-    private int generation;
+    private volatile int generation;
     private long lastBack;
     private Runnable refreshTicket;
     private Set<String> favorites;
@@ -68,6 +68,7 @@ public final class MainActivity extends Activity {
         header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);TextView logo=label("ASTON TV · MOBILE",18);logo.setTextColor(teal);header.addView(logo,new LinearLayout.LayoutParams(0,dp(50),1));header.addView(button("↻",this::connect),new LinearLayout.LayoutParams(dp(52),dp(50)));shell.addView(header);
         video=new FrameLayout(this);video.setContentDescription("Видео зона");video.setBackgroundColor(Color.BLACK);
         playerView=new PlayerView(this);playerView.setPlayer(player);playerView.setControllerShowTimeoutMs(4000);playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);video.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
+        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
         LinearLayout overlay=new LinearLayout(this);overlay.setGravity(Gravity.END);
         overlay.addView(button("◀",()->step(-1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
         overlay.addView(button("▶",()->step(1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
@@ -111,7 +112,20 @@ public final class MainActivity extends Activity {
     private void rename(JSONObject item){EditText input=new EditText(this);input.setSingleLine(true);input.setText(name(item,true));new AlertDialog.Builder(this).setTitle("Име на камерата").setView(input).setPositiveButton("Запази",(d,w)->{String s=input.getText().toString().trim();prefs.edit().putString("camera."+item.optString("id"),s.isEmpty()?item.optString("name"):s.substring(0,Math.min(60,s.length()))).apply();renderRows();if(selectedCamera&&selected!=null)title.setText(name(selected,true));}).setNegativeButton("Отказ",null).show();}
     private interface Work {JSONObject run(GatewayClient client)throws Exception;}
     private interface Result {void accept(JSONObject value);}
-    private void request(Work work,Result result){final GatewayClient client=api;io.execute(()->{try{JSONObject data=work.run(client);main.post(()->{if(!destroyed&&api==client)result.accept(data);});}catch(Exception e){main.post(()->{if(destroyed||api!=client)return;status.setText(e instanceof GatewayClient.Failure?e.getMessage():"Няма връзка със сървъра. Провери Wi-Fi/VPN или външния адрес.");if(e instanceof GatewayClient.Failure&&((GatewayClient.Failure)e).status==401){paired=false;pairDialog();}});}});}
+    private void request(Work work,Result result){request(work,result,-1);}
+    private void request(Work work,Result result,int expected){
+        final GatewayClient client=api;
+        io.execute(()->{
+            if(expected>=0&&expected!=generation)return;
+            try{JSONObject data=work.run(client);main.post(()->{if(!destroyed&&api==client&&(expected<0||expected==generation))result.accept(data);});}
+            catch(Exception e){main.post(()->{
+                if(destroyed||api!=client||(expected>=0&&expected!=generation))return;
+                status.setText(e instanceof GatewayClient.Failure?e.getMessage():"Няма връзка със сървъра. Провери Wi-Fi/VPN или външния адрес.");
+                if(expected>=0){manualFull=false;suppressLandscape=true;layout();}
+                if(e instanceof GatewayClient.Failure&&((GatewayClient.Failure)e).status==401){paired=false;pairDialog();}
+            });}
+        });
+    }
     private void connect(){status.setText("Проверка на връзката…");request(c->c.request("api/public/me",null),me->{paired=true;reload();});}
     private void reload(){
         request(c->c.request("api/public/channels",null),r->{channels=r.optJSONArray("channels");if(channels==null)channels=new JSONArray();renderRows();if(selected==null)status.setText("Заредени "+channels.length()+" канала");if(selected==null&&prefs.getBoolean("resume",false)){String last=prefs.getString("last","");for(int i=0;i<channels.length();i++)if(last.equals(channels.optJSONObject(i).optString("id"))){play(channels.optJSONObject(i),false);break;}}});
@@ -128,7 +142,7 @@ public final class MainActivity extends Activity {
                 player.setMediaSource(new DefaultMediaSourceFactory(http).createMediaSource(media));player.prepare();player.setPlayWhenReady(foreground);
                 refreshTicket=()->{if(seq==generation&&selected!=null&&foreground)play(selected,selectedCamera);};main.postDelayed(refreshTicket,23*60*1000);
             }catch(Exception e){status.setText("Невалиден видео адрес от Gateway");}
-        });renderRows();
+        },seq);renderRows();
     }
     private void step(int delta){JSONArray source=selectedCamera?cameras:channels;List<JSONObject> list=new ArrayList<>();for(int i=0;i<source.length();i++){JSONObject c=source.optJSONObject(i);if(c!=null&&(!selectedCamera||GatewayClient.enabled(c.opt("enabled"))))list.add(c);}if(list.isEmpty())return;int index=-1;for(int i=0;i<list.size();i++)if(selected!=null&&list.get(i).optString("id").equals(selected.optString("id")))index=i;play(list.get((index+delta+list.size())%list.size()),selectedCamera);}
     private void stop(){generation++;if(refreshTicket!=null)main.removeCallbacks(refreshTicket);player.stop();player.clearMediaItems();selected=null;manualFull=false;suppressLandscape=false;title.setText("Избери канал или камера");status.setText("Спряно");layout();}
