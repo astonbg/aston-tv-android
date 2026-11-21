@@ -59,7 +59,9 @@ jobs:
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w eu.astonserver.astontv.android.mobile.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
             grep -F 'OK (1 test)' instrumentation.txt
-            adb pull /sdcard/Android/data/eu.astonserver.astontv.android.mobile/files/screenshots android-screenshots
+            adb exec-out run-as eu.astonserver.astontv.android.mobile tar -C /sdcard/Android/data/eu.astonserver.astontv.android.mobile/files/screenshots -cf - . > android-screenshots.tar
+            mkdir -p android-screenshots
+            tar -xf android-screenshots.tar -C android-screenshots
             adb install -r app/build/outputs/apk/release/app-release.apk
             adb shell am start -W -n eu.astonserver.astontv.android.mobile/eu.astonserver.astontv.android.MainActivity
       - uses: actions/upload-artifact@v4
