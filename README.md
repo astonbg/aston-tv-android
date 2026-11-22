@@ -12,3 +12,8 @@ Android wrapper for the existing Aston TV Premium gateway.
 GitHub Actions workflow **Build Android APK** builds app-debug.apk, signed with Android's debug key. Download from workflow run artifacts.
 
 **Not a production-signed release.** Playback and camera support depends on the actual gateway, Android WebView and device capabilities.
+
+## Shared mobile development
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md). The [mobile roadmap](docs/mobile-roadmap.md) distinguishes the app targets and existing recovery branch. Use [testing criteria](docs/testing.md) and [agent handoffs](docs/agent-handoff.md) for evidence and ownership.
+
+The heading above describes the historical root wrapper; it is not the version of every Android/iOS target. See the roadmap before building or naming a release.
