@@ -1,0 +1,51 @@
+name: Build Aston TV 9 for iPhone (unsigned IPA)
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ios-tv9']
+    paths:
+      - 'ios-tv9/**'
+      - '.github/workflows/build-tv9-ios.yml'
+jobs:
+  iphone:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: App icon (new red Aston TV logo)
+        run: |
+          base64 -D -i ios-tv9/icon.b64 -o "$RUNNER_TEMP/icon.jpg"
+          sips -s format png -z 1024 1024 "$RUNNER_TEMP/icon.jpg" --out ios-tv9/AstonTV9/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          sips -g pixelWidth -g pixelHeight -g hasAlpha ios-tv9/AstonTV9/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+      - name: Generate Xcode project
+        run: cd ios-tv9 && xcodegen generate
+      - name: Build iPhone arm64 app without signing
+        run: |
+          xcodebuild -project ios-tv9/AstonTV9.xcodeproj -scheme AstonTV9 -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO build
+      - name: Verify
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/AstonTV.app"
+          ls "$APP"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$APP/Info.plist"
+          lipo "$APP/AstonTV" -verify_arch arm64
+          test -f "$APP/Assets.car"
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/AstonTV.app" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.6-UNSIGNED.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.6-UNSIGNED.ipa" | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AstonTV-Mobile-9.3.6-UNSIGNED-IPA
+          path: AstonTV-Mobile-9.3.6-UNSIGNED.ipa
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete ios-9.3.6 --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create ios-9.3.6 AstonTV-Mobile-9.3.6-UNSIGNED.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Aston TV 9.3.6 iPhone (unsigned IPA)" --notes "Install with Sideloadly."
