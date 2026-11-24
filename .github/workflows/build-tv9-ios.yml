@@ -37,15 +37,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/AstonTV.app" "$RUNNER_TEMP/Payload/"
-          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.6-UNSIGNED.ipa" Payload
-          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.6-UNSIGNED.ipa" | tail -1
+          cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.7-UNSIGNED.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/AstonTV-Mobile-9.3.7-UNSIGNED.ipa" | tail -1
       - uses: actions/upload-artifact@v4
         with:
-          name: AstonTV-Mobile-9.3.6-UNSIGNED-IPA
-          path: AstonTV-Mobile-9.3.6-UNSIGNED.ipa
+          name: AstonTV-Mobile-9.3.7-UNSIGNED-IPA
+          path: AstonTV-Mobile-9.3.7-UNSIGNED.ipa
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete ios-9.3.6 --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-          gh release create ios-9.3.6 AstonTV-Mobile-9.3.6-UNSIGNED.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Aston TV 9.3.6 iPhone (unsigned IPA)" --notes "Install with Sideloadly."
+          gh release delete ios-9.3.7 --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create ios-9.3.7 AstonTV-Mobile-9.3.7-UNSIGNED.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Aston TV 9.3.7 iPhone (unsigned IPA)" --notes "Install with Sideloadly."

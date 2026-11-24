@@ -2,7 +2,7 @@ name: AstonTV9
 options:
   bundleIdPrefix: eu.astonserver
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.0"
 settings:
   base:
     SWIFT_VERSION: "5.9"
@@ -11,7 +11,6 @@ settings:
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
     INFOPLIST_KEY_UILaunchScreen_Generation: YES
     INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
-    INFOPLIST_KEY_UIViewControllerBasedStatusBarAppearance: NO
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -31,6 +30,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eu.astonserver.astontv.mobile
         PRODUCT_NAME: AstonTV
-        MARKETING_VERSION: 9.3.6
-        CURRENT_PROJECT_VERSION: 936
+        MARKETING_VERSION: 9.3.7
+        CURRENT_PROJECT_VERSION: 937
         GENERATE_INFOPLIST_FILE: YES
