@@ -25,11 +25,15 @@ targets:
       properties:
         CFBundleDisplayName: Aston TV
         UIBackgroundModes: [audio]
+        NSCameraUsageDescription: Камерата се ползва само за сканиране на QR кода при сдвояване на телевизор или друго устройство.
+        CFBundleURLTypes:
+          - CFBundleURLName: eu.astonserver.astontv.pair
+            CFBundleURLSchemes: [astontv]
         UIRequiresFullScreen: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eu.astonserver.astontv.mobile
         PRODUCT_NAME: AstonTV
-        MARKETING_VERSION: 9.3.7
-        CURRENT_PROJECT_VERSION: 937
+        MARKETING_VERSION: 10.0.0
+        CURRENT_PROJECT_VERSION: 1000
         GENERATE_INFOPLIST_FILE: YES
